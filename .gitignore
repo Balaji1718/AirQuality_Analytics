@@ -1,0 +1,62 @@
+# Dependencies
+node_modules/
+*/node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnp
+.pnp.js
+
+# Environment files (IMPORTANT - protects API keys)
+.env
+server/.env
+*.env.local
+*.env.development.local
+*.env.test.local
+*.env.production.local
+
+# Build outputs
+build/
+dist/
+client/build/
+
+# Testing
+coverage/
+*.lcov
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Temporary files
+*.tmp
+*.temp
+
+# Test and development files
+test-*.js
+*test*.json
+*coverage*.json
+background-preview.html
+
+# Documentation (keeping only project README)
+client/README.md
