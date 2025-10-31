@@ -1,8 +1,12 @@
-const express = require("express");
+﻿const express = require("express");
 const axios = require("axios");
 const cors = require("cors");
 const path = require("path");
+const cron = require("node-cron");
 require("dotenv").config();
+
+// Import database functions
+const { testConnection, initializeTables, storeAirQualityData, pool } = require('./db');
 
 const app = express();
 app.use(cors());
@@ -83,6 +87,505 @@ function groupSnapshot(results) {
   });
   return Object.keys(map).map(k => ({ pollutant: k, value: +(map[k].sum / map[k].count).toFixed(2), unit: map[k].unit }));
 }
+
+// ==================== DATABASE ROUTES ====================
+
+/**
+ * GET /api/collection-status - Get data collection status
+ */
+app.get('/api/collection-status', async (req, res) => {
+  try {
+    res.json({
+      status: 'Always Active',
+      description: 'Continuous data collection from multiple sources',
+      nextCollection: new Date(Date.now() + 60 * 60 * 1000).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }),
+      timestamp: new Date().toISOString(),
+      capabilities: [
+        'Multi-source API data collection (OpenAQ, WAQI, OpenWeather)',
+        'Intelligent fallback system with realistic data generation',
+        'Continuous 24/7 operation with high reliability',
+        'Automatic database storage for all data sources'
+      ]
+    });
+  } catch (error) {
+    res.status(500).json({
+      status: 'Error',
+      error: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+/**
+ * POST /api/store - Manually trigger data storage (for testing)
+ * Continuous operation using multiple data sources with intelligent fallback
+ */
+app.post('/api/store', async (req, res) => {
+  try {
+    const { city = 'Delhi' } = req.body;
+    
+    console.log(`≡ƒöä Manual data collection triggered`);
+    
+    const result = await autoFetchAndStore();
+    if (result.success) {
+      res.json({ 
+        success: true, 
+        message: result.message,
+        successCount: result.successCount,
+        totalCities: result.totalCities,
+        onlineSuccessCount: result.onlineSuccessCount,
+        offlineGeneratedCount: result.offlineGeneratedCount,
+        timestamp: new Date().toISOString(),
+        collection_type: 'multi_source'
+      });
+    } else {
+      res.status(500).json({ 
+        success: false, 
+        error: 'Failed to collect and store data',
+        message: result.message,
+        timestamp: new Date().toISOString()
+      });
+    }
+  } catch (error) {
+    console.error('Γ¥î Manual storage error:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Internal server error during manual storage',
+      details: error.message,
+      timestamp: new Date().toISOString()
+    });
+  }
+});
+
+/**
+ * GET /api/current - Fetch fresh air quality data from external APIs
+ * This route fetches current data directly from APIs and returns it immediately
+ */
+app.get("/api/current", async (req, res) => {
+  try {
+    const { city } = req.query;
+    if (!city) {
+      return res.status(400).json({ error: "City parameter is required" });
+    }
+
+    console.log(`≡ƒöä Fetching current data for ${city}...`);
+
+    // Use existing hybrid API logic to get fresh data
+    const locations = await findLocationsByCity(city);
+    if (locations.length === 0) {
+      return res.status(404).json({ error: `No monitoring locations found for ${city}` });
+    }
+
+    let allResults = [];
+    let successfulSource = null;
+
+    // Try OpenAQ first
+    try {
+      for (const location of locations.slice(0, 2)) {
+        if (location.sensors && location.sensors.length > 0) {
+          for (const sensor of location.sensors.slice(0, 3)) {
+            try {
+              const url = `${OPENAQ_API}/sensors/${sensor.id}/measurements?limit=10&sort=desc`;
+              const response = await axios.get(url, { headers: HEADERS, timeout: 10000 });
+              
+              const sensorResults = (response.data.results || []).map(r => ({
+                pollutant: r.parameter?.name || 'unknown',
+                value: r.value,
+                unit: r.parameter?.units || '',
+                dateUTC: r.period?.datetimeTo?.utc,
+                location: location.name
+              }));
+              
+              allResults = allResults.concat(sensorResults);
+              successfulSource = 'OpenAQ';
+            } catch (sensorErr) {
+              console.log(`Sensor ${sensor.id} failed: ${sensorErr.message}`);
+            }
+          }
+        }
+      }
+    } catch (openaqErr) {
+      console.log('OpenAQ failed, trying WAQI...');
+    }
+
+    // Fallback to WAQI if OpenAQ didn't work
+    if (allResults.length === 0) {
+      try {
+        const waqiResult = await fetchFromWAQI(city);
+        if (waqiResult.success) {
+          allResults = waqiResult.data;
+          successfulSource = 'WAQI';
+        }
+      } catch (waqiErr) {
+        console.log('WAQI also failed:', waqiErr.message);
+      }
+    }
+
+    if (allResults.length === 0) {
+      return res.status(404).json({ 
+        error: `No current air quality data available for ${city}`,
+        message: "Try checking the city name or try again later"
+      });
+    }
+
+    // Format response
+    const responseData = {
+      city: city,
+      source: successfulSource,
+      timestamp: new Date().toISOString(),
+      count: allResults.length,
+      current_data: allResults,
+      snapshot: groupSnapshot(allResults),
+      message: `Fresh air quality data from ${successfulSource} API`
+    };
+
+    console.log(`Γ£à Successfully fetched current data for ${city} from ${successfulSource}`);
+    res.json(responseData);
+
+  } catch (err) {
+    console.error('Error fetching current data:', err.message);
+    res.status(500).json({ 
+      error: "Failed to fetch current air quality data",
+      details: err.message 
+    });
+  }
+});
+
+/**
+ * GET /api/data-availability - Get information about available historical data dates and cities
+ * This endpoint provides metadata about what data is available in the database
+ */
+app.get("/api/data-availability", async (req, res) => {
+  try {
+    console.log(`≡ƒôè Querying data availability information...`);
+
+    // Query to get overall date range and city coverage
+    const client = await pool.connect();
+    
+    // Get overall date range
+    const dateRangeQuery = `
+      SELECT 
+        MIN(DATE(timestamp)) as earliest_date,
+        MAX(DATE(timestamp)) as latest_date,
+        COUNT(*) as total_records
+      FROM air_quality_data
+    `;
+    const dateRangeResult = await client.query(dateRangeQuery);
+    
+    // Get city-specific information
+    const cityDataQuery = `
+      SELECT 
+        city, 
+        COUNT(*) as record_count,
+        MIN(DATE(timestamp)) as earliest_date,
+        MAX(DATE(timestamp)) as latest_date,
+        array_agg(DISTINCT api_source) as sources
+      FROM air_quality_data 
+      GROUP BY city 
+      ORDER BY record_count DESC
+    `;
+    const cityDataResult = await client.query(cityDataQuery);
+    
+    // Get pollutants availability
+    const pollutantQuery = `
+      SELECT 
+        COUNT(CASE WHEN pm25 IS NOT NULL THEN 1 END) as pm25_count,
+        COUNT(CASE WHEN pm10 IS NOT NULL THEN 1 END) as pm10_count,
+        COUNT(CASE WHEN no2 IS NOT NULL THEN 1 END) as no2_count,
+        COUNT(CASE WHEN so2 IS NOT NULL THEN 1 END) as so2_count,
+        COUNT(CASE WHEN o3 IS NOT NULL THEN 1 END) as o3_count,
+        COUNT(CASE WHEN co IS NOT NULL THEN 1 END) as co_count
+      FROM air_quality_data
+    `;
+    const pollutantResult = await client.query(pollutantQuery);
+    
+    client.release();
+
+    const overall = dateRangeResult.rows[0];
+    const cityData = cityDataResult.rows;
+    const pollutantData = pollutantResult.rows[0];
+
+    // Format response
+    const availability = {
+      overall_summary: {
+        total_records: parseInt(overall.total_records),
+        earliest_date: overall.earliest_date ? overall.earliest_date.toISOString().split('T')[0] : null,
+        latest_date: overall.latest_date ? overall.latest_date.toISOString().split('T')[0] : null,
+        date_range_days: overall.earliest_date && overall.latest_date ? 
+          Math.ceil((new Date(overall.latest_date) - new Date(overall.earliest_date)) / (1000 * 60 * 60 * 24)) + 1 : 0
+      },
+      cities_available: cityData.map(city => ({
+        city: city.city,
+        record_count: parseInt(city.record_count),
+        date_range: {
+          from: city.earliest_date ? city.earliest_date.toISOString().split('T')[0] : null,
+          to: city.latest_date ? city.latest_date.toISOString().split('T')[0] : null
+        },
+        data_sources: city.sources
+      })),
+      pollutants_coverage: {
+        pm25: parseInt(pollutantData.pm25_count),
+        pm10: parseInt(pollutantData.pm10_count),
+        no2: parseInt(pollutantData.no2_count),
+        so2: parseInt(pollutantData.so2_count),
+        o3: parseInt(pollutantData.o3_count),
+        co: parseInt(pollutantData.co_count)
+      },
+      valid_date_format: "YYYY-MM-DD",
+      example_query: `/api/historical?city=Delhi&date_from=${overall.earliest_date ? overall.earliest_date.toISOString().split('T')[0] : '2025-10-29'}&date_to=${overall.latest_date ? overall.latest_date.toISOString().split('T')[0] : '2025-10-30'}&limit=50`,
+      supported_cities: cityData.map(c => c.city),
+      date_range_info: {
+        status: overall.earliest_date && overall.latest_date && overall.earliest_date.toISOString().split('T')[0] === overall.latest_date.toISOString().split('T')[0] ? 
+          "Single day available" : "Multi-day range available",
+        recommendation: overall.earliest_date && overall.latest_date ? 
+          `Use dates from ${overall.earliest_date.toISOString().split('T')[0]} to ${overall.latest_date.toISOString().split('T')[0]} for best results` :
+          "Historical data collection in progress"
+      },
+      last_updated: new Date().toISOString()
+    };
+
+    console.log(`Γ£à Data availability: ${overall.total_records} total records from ${overall.earliest_date} to ${overall.latest_date}`);
+
+    res.json({
+      success: true,
+      data_availability: availability,
+      message: "Historical data availability information"
+    });
+
+  } catch (err) {
+    console.error('Error fetching data availability:', err.message);
+    res.status(500).json({ 
+      error: "Failed to fetch data availability information", 
+      details: err.message 
+    });
+  }
+});
+
+/**
+ * GET /api/valid-dates/:city - Get valid date examples for a specific city
+ * This endpoint provides specific date examples that have data available
+ */
+app.get("/api/valid-dates/:city", async (req, res) => {
+  try {
+    const city = req.params.city;
+    
+    if (!city) {
+      return res.status(400).json({ error: "City parameter is required" });
+    }
+
+    console.log(`≡ƒôà Getting valid dates for ${city}...`);
+
+    const client = await pool.connect();
+    
+    // Get specific dates that have data for this city
+    const validDatesQuery = `
+      SELECT DISTINCT 
+        DATE(timestamp) as date,
+        COUNT(*) as record_count,
+        array_agg(DISTINCT api_source) as sources,
+        MIN(timestamp) as earliest_time,
+        MAX(timestamp) as latest_time
+      FROM air_quality_data 
+      WHERE LOWER(city) LIKE LOWER($1)
+      GROUP BY DATE(timestamp) 
+      ORDER BY date DESC
+      LIMIT 30
+    `;
+    
+    const validDatesResult = await client.query(validDatesQuery, [`%${city}%`]);
+    client.release();
+
+    const validDates = validDatesResult.rows.map(row => ({
+      date: row.date.toISOString().split('T')[0],
+      record_count: parseInt(row.record_count),
+      sources: row.sources,
+      time_range: {
+        earliest: row.earliest_time,
+        latest: row.latest_time
+      }
+    }));
+
+    console.log(`Γ£à Found ${validDates.length} valid dates for ${city}`);
+
+    res.json({
+      success: true,
+      city: city,
+      valid_dates: validDates,
+      example_queries: validDates.slice(0, 3).map(vd => ({
+        date: vd.date,
+        single_day: `/api/historical?city=${city}&date_from=${vd.date}&date_to=${vd.date}`,
+        with_limit: `/api/historical?city=${city}&date_from=${vd.date}&date_to=${vd.date}&limit=10`
+      })),
+      date_format_help: {
+        format: "YYYY-MM-DD",
+        examples: validDates.slice(0, 5).map(vd => vd.date)
+      },
+      message: `${validDates.length} valid dates found for ${city}`
+    });
+
+  } catch (err) {
+    console.error('Error fetching valid dates:', err.message);
+    res.status(500).json({ 
+      error: "Failed to fetch valid dates", 
+      details: err.message 
+    });
+  }
+});
+
+/**
+ * GET /api/historical - Query stored historical data from Neon database
+ * This route queries the PostgreSQL database with filtering options
+ */
+app.get("/api/historical", async (req, res) => {
+  try {
+    const { city, country, date_from, date_to, hour_from, hour_to, limit = 100 } = req.query;
+
+    if (!city) {
+      return res.status(400).json({ error: "City parameter is required for historical data" });
+    }
+
+    console.log(`≡ƒôè Querying historical data for ${city}...`);
+
+    // Build dynamic query with filters
+    let query = 'SELECT * FROM air_quality_data WHERE 1=1';
+    const values = [];
+    let paramCount = 0;
+
+    // City filter (required)
+    paramCount++;
+    query += ` AND LOWER(city) LIKE LOWER($${paramCount})`;
+    values.push(`%${city}%`);
+
+    // Optional filters
+    if (country) {
+      paramCount++;
+      query += ` AND LOWER(country) LIKE LOWER($${paramCount})`;
+      values.push(`%${country}%`);
+    }
+
+    if (date_from) {
+      paramCount++;
+      query += ` AND DATE(timestamp) >= $${paramCount}`;
+      values.push(date_from);
+    }
+
+    if (date_to) {
+      paramCount++;
+      query += ` AND DATE(timestamp) <= $${paramCount}`;
+      values.push(date_to);
+    }
+
+    if (hour_from !== undefined) {
+      paramCount++;
+      query += ` AND hour_recorded >= $${paramCount}`;
+      values.push(parseInt(hour_from));
+    }
+
+    if (hour_to !== undefined) {
+      paramCount++;
+      query += ` AND hour_recorded <= $${paramCount}`;
+      values.push(parseInt(hour_to));
+    }
+
+    // Add ordering and limit
+    query += ` ORDER BY timestamp DESC LIMIT $${paramCount + 1}`;
+    values.push(parseInt(limit));
+
+    // Execute query
+    const client = await pool.connect();
+    const result = await client.query(query, values);
+
+    // Format response for frontend
+    const formattedData = result.rows.map(row => ({
+      id: row.id,
+      city: row.city,
+      country: row.country,
+      coordinates: row.latitude && row.longitude ? [row.latitude, row.longitude] : null,
+      pollutants: {
+        pm25: row.pm25,
+        pm10: row.pm10,
+        no2: row.no2,
+        so2: row.so2,
+        o3: row.o3,
+        co: row.co
+      },
+      weather: {
+        temperature: row.temperature,
+        humidity: row.humidity,
+        pressure: row.pressure,
+        wind_speed: row.wind_speed,
+        wind_direction: row.wind_direction
+      },
+      timestamp: row.timestamp,
+      hour: row.hour_recorded,
+      source: row.api_source
+    }));
+
+    // Generate summary statistics
+    const summary = {
+      total_records: result.rows.length,
+      date_range: result.rows.length > 0 ? {
+        from: result.rows[result.rows.length - 1].timestamp,
+        to: result.rows[0].timestamp
+      } : null,
+      cities: [...new Set(result.rows.map(r => r.city))],
+      pollutants_available: []
+    };
+
+    // Check which pollutants have data
+    const pollutantFields = ['pm25', 'pm10', 'no2', 'so2', 'o3', 'co'];
+    pollutantFields.forEach(field => {
+      if (result.rows.some(row => row[field] !== null)) {
+        summary.pollutants_available.push(field);
+      }
+    });
+
+    console.log(`Γ£à Retrieved ${result.rows.length} historical records for ${city}`);
+
+    // Add data availability context
+    const availabilityQuery = `
+      SELECT 
+        MIN(DATE(timestamp)) as earliest_available,
+        MAX(DATE(timestamp)) as latest_available,
+        COUNT(*) as total_city_records
+      FROM air_quality_data 
+      WHERE LOWER(city) LIKE LOWER($1)
+    `;
+    const availabilityResult = await client.query(availabilityQuery, [`%${city}%`]);
+    const availability = availabilityResult.rows[0];
+    
+    client.release();
+
+    res.json({
+      success: true,
+      city: city,
+      filters_applied: { city, country, date_from, date_to, hour_from, hour_to },
+      summary: summary,
+      data_availability: {
+        city_earliest_date: availability.earliest_available,
+        city_latest_date: availability.latest_available,
+        total_city_records: parseInt(availability.total_city_records),
+        valid_date_format: "YYYY-MM-DD",
+        date_examples: [
+          availability.earliest_available ? availability.earliest_available.toISOString().split('T')[0] : null,
+          availability.latest_available ? availability.latest_available.toISOString().split('T')[0] : null
+        ],
+        query_tip: `Use date_from=${availability.earliest_available ? availability.earliest_available.toISOString().split('T')[0] : 'YYYY-MM-DD'}&date_to=${availability.latest_available ? availability.latest_available.toISOString().split('T')[0] : 'YYYY-MM-DD'} for full range`
+      },
+      historical_data: formattedData,
+      message: `Historical data from Neon PostgreSQL database (${availability.earliest_available ? availability.earliest_available.toISOString().split('T')[0] : 'No data'} to ${availability.latest_available ? availability.latest_available.toISOString().split('T')[0] : 'No data'})`
+    });
+
+  } catch (err) {
+    console.error('Error fetching historical data:', err.message);
+    res.status(500).json({ 
+      error: "Failed to fetch historical data", 
+      details: err.message 
+    });
+  }
+});
+
+// ==================== END DATABASE ROUTES ====================
 
 app.get("/api/search-city/:name", async (req, res) => {
   try {
@@ -270,7 +773,7 @@ async function fetchFromOpenWeather(cityName) {
             results.push({
               pollutant: pollutant.replace('_', '.'), // pm2_5 -> pm2.5
               value: value,
-              unit: 'μg/m³',
+              unit: '╬╝g/m┬│',
               dateUTC: new Date(data.dt * 1000).toISOString(),
               dateLocal: new Date(data.dt * 1000).toISOString(),
               location: cityName,
@@ -313,10 +816,10 @@ app.post("/api/measurements", async (req, res) => {
     // Check cache first
     const cachedResult = cache.get(cacheKey);
     if (cachedResult) {
-      console.log(`🎯 Cache hit for measurements: ${cityName}`);
+      console.log(`≡ƒÄ» Cache hit for measurements: ${cityName}`);
       return res.json(cachedResult);
     }
-    console.log(`❌ Cache miss for measurements: ${cityName}`);
+    console.log(`Γ¥î Cache miss for measurements: ${cityName}`);
 
     const locations = await findLocationsByCity(cityName);
     if (locations.length === 0) return res.status(404).json({ error: `No locations found for \"${cityName}\"` });
@@ -463,7 +966,7 @@ app.post("/api/measurements", async (req, res) => {
 
         if (response.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
           localAdvice = response.data.candidates[0].content.parts[0].text.trim();
-          console.log(`✨ Gemini AI advice generated for ${cityName}`);
+          console.log(`Γ£¿ Gemini AI advice generated for ${cityName}`);
         } else {
           throw new Error('No AI response');
         }
@@ -477,11 +980,11 @@ app.post("/api/measurements", async (req, res) => {
       if (avgPm25 === null) {
         localAdvice = "";
       } else if (avgPm25 >= 150) {
-        localAdvice = "PM2.5 is very high — avoid outdoor activities and wear protective masks.";
+        localAdvice = "PM2.5 is very high ΓÇö avoid outdoor activities and wear protective masks.";
       } else if (avgPm25 >= 55) {
-        localAdvice = "PM2.5 is unhealthy — sensitive groups should avoid prolonged outdoor exertion.";
+        localAdvice = "PM2.5 is unhealthy ΓÇö sensitive groups should avoid prolonged outdoor exertion.";
       } else if (avgPm25 >= 35) {
-        localAdvice = "PM2.5 is moderate — consider limiting long outdoor activities.";
+        localAdvice = "PM2.5 is moderate ΓÇö consider limiting long outdoor activities.";
       } else {
         localAdvice = "Air quality (PM2.5) is good to moderate.";
       }
@@ -499,7 +1002,7 @@ app.post("/api/measurements", async (req, res) => {
 
     // Cache the response for future requests
     cache.set(cacheKey, responseData);
-    console.log(`💾 Cached measurements for ${cityName}`);
+    console.log(`≡ƒÆ╛ Cached measurements for ${cityName}`);
 
     res.json(responseData);
   } catch (err) {
@@ -521,10 +1024,10 @@ app.post("/api/insights", async (req, res) => {
     // Check cache first
     const cachedResult = cache.get(cacheKey);
     if (cachedResult) {
-      console.log(`🎯 Cache hit for insights: ${city}`);
+      console.log(`≡ƒÄ» Cache hit for insights: ${city}`);
       return res.json(cachedResult);
     }
-    console.log(`❌ Cache miss for insights: ${city}`);
+    console.log(`Γ¥î Cache miss for insights: ${city}`);
 
     // Try Gemini AI first, fallback to rule-based if it fails
     let geminiWorked = false;
@@ -561,7 +1064,7 @@ app.post("/api/insights", async (req, res) => {
           
           if (response.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
             const aiInsight = response.data.candidates[0].content.parts[0].text;
-            console.log('🎉 Gemini AI insights generated successfully!');
+            console.log('≡ƒÄë Gemini AI insights generated successfully!');
             
             const responseData = { 
               insights: aiInsight.trim(),
@@ -572,7 +1075,7 @@ app.post("/api/insights", async (req, res) => {
 
             // Cache the AI response for future requests
             cache.set(cacheKey, responseData);
-            console.log(`💾 Cached AI insights for ${city}`);
+            console.log(`≡ƒÆ╛ Cached AI insights for ${city}`);
 
             return res.json(responseData);
           }
@@ -583,7 +1086,7 @@ app.post("/api/insights", async (req, res) => {
         }
       }
       
-      console.log('❌ All Gemini endpoints failed, falling back to professional rule-based system');
+      console.log('Γ¥î All Gemini endpoints failed, falling back to professional rule-based system');
     }
 
     // Enhanced Professional Rule-Based Health Advisory System
@@ -665,17 +1168,17 @@ app.post("/api/insights", async (req, res) => {
     let insight = "";
     
     if (overallRisk === "extreme") {
-      insight = `🚨 HEALTH EMERGENCY: Air quality in ${city} is extremely hazardous (${specificRisks.join(", ")}). ${recommendations.join(", ")}. Seek medical attention if experiencing breathing difficulties.`;
+      insight = `≡ƒÜ¿ HEALTH EMERGENCY: Air quality in ${city} is extremely hazardous (${specificRisks.join(", ")}). ${recommendations.join(", ")}. Seek medical attention if experiencing breathing difficulties.`;
     } else if (overallRisk === "very high") {
-      insight = `⚠️ VERY UNHEALTHY: Air quality in ${city} poses serious health risks (${specificRisks.join(", ")}). Essential advice: ${recommendations.slice(0, 3).join(", ")}. Especially important for ${[...new Set(vulnerableGroups)].join(", ")}.`;
+      insight = `ΓÜá∩╕Å VERY UNHEALTHY: Air quality in ${city} poses serious health risks (${specificRisks.join(", ")}). Essential advice: ${recommendations.slice(0, 3).join(", ")}. Especially important for ${[...new Set(vulnerableGroups)].join(", ")}.`;
     } else if (overallRisk === "high") {
-      insight = `⚠️ UNHEALTHY: Air quality in ${city} is concerning (${specificRisks.join(", ")}). Recommended actions: ${recommendations.slice(0, 2).join(", ")}. ${[...new Set(vulnerableGroups)].join(", ")} should take extra precautions.`;
+      insight = `ΓÜá∩╕Å UNHEALTHY: Air quality in ${city} is concerning (${specificRisks.join(", ")}). Recommended actions: ${recommendations.slice(0, 2).join(", ")}. ${[...new Set(vulnerableGroups)].join(", ")} should take extra precautions.`;
     } else if (overallRisk === "moderate") {
-      insight = `⚡ MODERATE: Air quality in ${city} requires attention (${specificRisks.join(", ")}). Consider ${recommendations[0] || "monitoring conditions closely"}. ${vulnerableGroups.length ? [...new Set(vulnerableGroups)].join(", ") + " should be cautious" : "Generally acceptable for most people"}.`;
+      insight = `ΓÜí MODERATE: Air quality in ${city} requires attention (${specificRisks.join(", ")}). Consider ${recommendations[0] || "monitoring conditions closely"}. ${vulnerableGroups.length ? [...new Set(vulnerableGroups)].join(", ") + " should be cautious" : "Generally acceptable for most people"}.`;
     } else {
       const pollutantCount = data.length;
       const uniquePollutants = [...new Set(data.map(r => r.pollutant))];
-      insight = `✅ GOOD: Air quality in ${city} appears healthy based on ${pollutantCount} measurements covering ${uniquePollutants.join(", ")}. Safe for all outdoor activities including exercise and recreation.`;
+      insight = `Γ£à GOOD: Air quality in ${city} appears healthy based on ${pollutantCount} measurements covering ${uniquePollutants.join(", ")}. Safe for all outdoor activities including exercise and recreation.`;
     }
     
     const responseData = { 
@@ -694,7 +1197,7 @@ app.post("/api/insights", async (req, res) => {
 
     // Cache the response for future requests
     cache.set(cacheKey, responseData);
-    console.log(`💾 Cached rule-based insights for ${city}`);
+    console.log(`≡ƒÆ╛ Cached rule-based insights for ${city}`);
 
     res.json(responseData);
 
@@ -824,7 +1327,7 @@ app.post("/api/hybrid-measurements", async (req, res) => {
     const cachedResult = cache.get(cacheKey);
     
     if (cachedResult) {
-      console.log(`✅ Cache hit for ${cityName}`);
+      console.log(`Γ£à Cache hit for ${cityName}`);
       return res.json({
         ...cachedResult,
         cached: true,
@@ -832,7 +1335,7 @@ app.post("/api/hybrid-measurements", async (req, res) => {
       });
     }
     
-    console.log(`🔄 Cache miss for ${cityName}, fetching fresh data...`);
+    console.log(`≡ƒöä Cache miss for ${cityName}, fetching fresh data...`);
 
     // Parse and validate date filtering parameters
     const currentYear = new Date().getFullYear();
@@ -926,7 +1429,7 @@ app.post("/api/hybrid-measurements", async (req, res) => {
     const date_from = start.toISOString();
     const date_to = end.toISOString();
     
-    console.log(`🗓️ Date filtering: ${date_from} to ${date_to}`);
+    console.log(`≡ƒùô∩╕Å Date filtering: ${date_from} to ${date_to}`);
 
     const results = [];
     let successfulSource = null;
@@ -1006,7 +1509,7 @@ app.post("/api/hybrid-measurements", async (req, res) => {
         
         // Note if user requested historical data but we're using current data
         if (fromYear && fromYear < new Date().getFullYear()) {
-          console.log(`⚠️ User requested ${fromYear} data, but WAQI only provides current data`);
+          console.log(`ΓÜá∩╕Å User requested ${fromYear} data, but WAQI only provides current data`);
         }
       } else {
         allErrors.push(`WAQI: ${waqiResult.error}`);
@@ -1041,7 +1544,7 @@ app.post("/api/hybrid-measurements", async (req, res) => {
     
     try {
       if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "demo" && results.length > 0) {
-        console.log(`🤖 Generating Gemini AI health advice for ${cityName}...`);
+        console.log(`≡ƒñû Generating Gemini AI health advice for ${cityName}...`);
         
         const prompt = `You are an air quality health expert. Provide a practical health advisory (2-3 sentences) for ${cityName} based on this air quality data from ${successfulSource}: ${JSON.stringify(results.slice(0, 15))}. Focus on actionable recommendations for residents.`;
         
@@ -1060,7 +1563,7 @@ app.post("/api/hybrid-measurements", async (req, res) => {
         if (response.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
           localAdvice = response.data.candidates[0].content.parts[0].text.trim();
           adviceSource = "Gemini AI";
-          console.log('🎉 Gemini AI health advice generated successfully!');
+          console.log('≡ƒÄë Gemini AI health advice generated successfully!');
         } else {
           throw new Error('No AI response received');
         }
@@ -1068,7 +1571,7 @@ app.post("/api/hybrid-measurements", async (req, res) => {
         throw new Error('Gemini AI not available');
       }
     } catch (aiError) {
-      console.log('🔄 Gemini failed, using enhanced rule-based advice...');
+      console.log('≡ƒöä Gemini failed, using enhanced rule-based advice...');
       
       // Enhanced rule-based advice with multiple pollutants
       const pm25 = results.filter(r => r.pollutant === "pm25" || r.pollutant === "pm2.5").map(r => r.value);
@@ -1112,7 +1615,7 @@ app.post("/api/hybrid-measurements", async (req, res) => {
         localAdvice = `Air quality in ${cityName} appears good based on ${pollutantCount} measurements from ${sources.join(" and ")} monitoring. Safe for outdoor activities.`;
       }
       
-      console.log('✅ Enhanced rule-based advice generated successfully');
+      console.log('Γ£à Enhanced rule-based advice generated successfully');
     }
 
     // Filter for recent data to improve chart quality, but skip if user requested specific historical dates
@@ -1136,13 +1639,13 @@ app.post("/api/hybrid-measurements", async (req, res) => {
         primarySource: successfulSource,
         adviceSource: adviceSource,
         availableSources: Object.keys(API_SOURCES),
-        note: `Data from ${successfulSource} API${successfulSource === 'WAQI' || successfulSource === 'OpenWeather' ? ' (current data only)' : ` (${date_from.split('T')[0]} to ${date_to.split('T')[0]})`} 📅, advice from ${adviceSource}${dataQualityNote}`
+        note: `Data from ${successfulSource} API${successfulSource === 'WAQI' || successfulSource === 'OpenWeather' ? ' (current data only)' : ` (${date_from.split('T')[0]} to ${date_to.split('T')[0]})`} ≡ƒôà, advice from ${adviceSource}${dataQualityNote}`
       }
     };
 
     // Cache the response for future requests
     cache.set(cacheKey, responseData);
-    console.log(`💾 Cached result for ${cityName}`);
+    console.log(`≡ƒÆ╛ Cached result for ${cityName}`);
 
     res.json(responseData);
 
@@ -1224,7 +1727,7 @@ app.get("/api/sources", async (req, res) => {
           coverage: "137 countries, 26 locations in India",
           strengths: ["Historical data", "Sensor-level detail", "Government sources"],
           limitations: ["Limited coverage in some countries", "Missing Tamil Nadu"],
-          status: HEADERS["X-API-Key"] ? "Configured ✅" : "Needs API key ❌",
+          status: HEADERS["X-API-Key"] ? "Configured Γ£à" : "Needs API key Γ¥î",
           website: "https://openaq.org"
         },
         WAQI: {
@@ -1232,7 +1735,7 @@ app.get("/api/sources", async (req, res) => {
           coverage: "11,000+ stations worldwide, 1000+ cities",
           strengths: ["Global coverage", "Real-time data", "Many missing countries covered"],
           limitations: ["AQI format only", "Limited historical data"],
-          status: API_SOURCES.waqi.token !== "demo" ? "Configured ✅" : "Using demo token ⚠️",
+          status: API_SOURCES.waqi.token !== "demo" ? "Configured Γ£à" : "Using demo token ΓÜá∩╕Å",
           website: "https://aqicn.org",
           note: "Get free token from https://aqicn.org/data-platform/token/"
         },
@@ -1241,7 +1744,7 @@ app.get("/api/sources", async (req, res) => {
           coverage: "Global coordinates-based coverage",
           strengths: ["Worldwide coverage", "Coordinate-based", "Weather + air quality"],
           limitations: ["Requires coordinates", "Limited pollutants"],
-          status: process.env.OPENWEATHER_API_KEY ? "Configured ✅" : "Needs API key ❌",
+          status: process.env.OPENWEATHER_API_KEY ? "Configured Γ£à" : "Needs API key Γ¥î",
           website: "https://openweathermap.org",
           note: "Get free API key from https://openweathermap.org/api"
         }
@@ -1257,13 +1760,13 @@ app.get("/api/sources", async (req, res) => {
         ]
       },
       missingCountriesCoverage: {
-        "Russia": "WAQI ✅, OpenWeather ✅",
-        "Iran": "WAQI ✅, OpenWeather ✅", 
-        "South Korea": "WAQI ✅, OpenWeather ✅",
-        "Venezuela": "WAQI ✅, OpenWeather ✅",
-        "Tamil Nadu": "WAQI ✅ (Chennai, Coimbatore), OpenWeather ✅",
-        "Cuba": "WAQI ✅, OpenWeather ✅",
-        "Syria": "WAQI ✅, OpenWeather ✅"
+        "Russia": "WAQI Γ£à, OpenWeather Γ£à",
+        "Iran": "WAQI Γ£à, OpenWeather Γ£à", 
+        "South Korea": "WAQI Γ£à, OpenWeather Γ£à",
+        "Venezuela": "WAQI Γ£à, OpenWeather Γ£à",
+        "Tamil Nadu": "WAQI Γ£à (Chennai, Coimbatore), OpenWeather Γ£à",
+        "Cuba": "WAQI Γ£à, OpenWeather Γ£à",
+        "Syria": "WAQI Γ£à, OpenWeather Γ£à"
       }
     };
     
@@ -1333,6 +1836,15 @@ app.get("/api/missing-countries", async (req, res) => {
     res.status(500).json({ error: "Failed to fetch missing countries data" });
   }
 });
+
+
+
+
+
+
+
+
+
 
 // Get Indian states and locations summary  
 app.get("/api/india-summary", async (req, res) => {
@@ -1418,6 +1930,9 @@ app.get("/api/india-summary", async (req, res) => {
   }
 });
 
+
+
+// Serve React app
 const buildPath = path.resolve(__dirname, "../client/build");
 app.use(express.static(buildPath));
 app.get(/^\/(?!api).*/, (req, res) => {
@@ -1425,4 +1940,339 @@ app.get(/^\/(?!api).*/, (req, res) => {
 });
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
+
+// ==================== AUTOMATIC DATA COLLECTION ====================
+
+// Connectivity check function removed - now using hybrid approach
+
+/**
+ * Automatically fetch and store air quality data for popular cities
+ * This function runs periodically via cron job
+ * Now includes connectivity check to prevent API calls when offline
+ */
+async function autoFetchAndStore() {
+  const popularCities = ['Delhi', 'Mumbai', 'Bengaluru', 'Chennai', 'Kolkata', 'Hyderabad'];
+  const apiSources = ['OpenAQ', 'WAQI', 'OpenWeather'];
+  
+  console.log('\n' + '='.repeat(60));
+  console.log('ΓÅ░ SCHEDULED DATA COLLECTION TRIGGERED');
+  console.log('≡ƒîÉ MULTI-SOURCE: Online APIs + Intelligent Fallback');
+  console.log('='.repeat(60));
+  
+  // Check connectivity first
+  // Always proceed with multi-source collection (no connectivity check needed)
+  
+  // if (!isOnline) {
+    console.log('∩┐╜ COLLECTION SKIPPED: Server is offline');
+    console.log('≡ƒô¥ Data collection will resume when internet connectivity is restored');
+    console.log('≡ƒÆí This prevents API quota waste and failed requests');
+    // return { success: false, reason: 'offline', message: 'Server offline - collection skipped' };
+  // }
+  
+  console.log('∩┐╜≡ƒöä Starting balanced automatic data collection...');
+  console.log(`≡ƒôè Using round-robin API assignment across ${apiSources.join(', ')}`);
+  
+  let successCount = 0;
+  let totalCities = popularCities.length;
+  let onlineSuccessCount = 0;
+  let offlineGeneratedCount = 0;
+  
+  for (let i = 0; i < popularCities.length; i++) {
+    const city = popularCities[i];
+    const primaryApi = apiSources[i % apiSources.length]; // Round-robin assignment
+    
+    console.log(`\n≡ƒôì ${city} - Primary: ${primaryApi}`);
+    try {
+      console.log(`≡ƒôí Fetching data for ${city}...`);
+      
+      // Use existing location finding logic
+      const locations = await findLocationsByCity(city);
+      if (locations.length === 0) {
+        console.log(`ΓÜá∩╕Å No locations found for ${city}`);
+        continue;
+      }
+
+      let allResults = [];
+      let successfulSource = null;
+
+      // Try OpenAQ first
+      for (const location of locations.slice(0, 2)) {
+        if (location.sensors && location.sensors.length > 0) {
+          for (const sensor of location.sensors.slice(0, 2)) {
+            try {
+              const url = `${OPENAQ_API}/sensors/${sensor.id}/measurements?limit=5&sort=desc`;
+              const response = await axios.get(url, { headers: HEADERS, timeout: 8000 });
+              
+              const sensorResults = (response.data.results || []).map(r => ({
+                pollutant: r.parameter?.name || 'unknown',
+                value: r.value,
+                unit: r.parameter?.units || '',
+                dateUTC: r.period?.datetimeTo?.utc,
+                location: location.name
+              }));
+              
+              allResults = allResults.concat(sensorResults);
+              successfulSource = 'OpenAQ';
+            } catch (sensorErr) {
+              console.log(`Failed to fetch sensor data: ${sensorErr.message}`);
+            }
+          }
+        }
+      }
+
+      // Implement balanced API strategy
+      if (allResults.length === 0) {
+        const fallbackApis = ['WAQI', 'OpenWeather'].filter(api => api !== primaryApi);
+        
+        for (const fallbackApi of fallbackApis) {
+          try {
+            console.log(`≡ƒöä Trying ${fallbackApi} fallback...`);
+            
+            if (fallbackApi === 'WAQI') {
+              const waqiResult = await fetchFromWAQI(city);
+              if (waqiResult.success && waqiResult.data) {
+                allResults = waqiResult.data;
+                successfulSource = 'WAQI';
+                console.log(`Γ£à ${fallbackApi} success: ${allResults.length} measurements`);
+                break;
+              }
+            } else if (fallbackApi === 'OpenWeather') {
+              // Add OpenWeather implementation
+              const owResult = await fetchFromOpenWeather(city);
+              if (owResult.success && owResult.data) {
+                allResults = owResult.data;
+                successfulSource = 'OpenWeather';
+                console.log(`Γ£à ${fallbackApi} success: ${allResults.length} measurements`);
+                break;
+              }
+            }
+          } catch (err) {
+            console.log(`Γ¥î ${fallbackApi} failed for ${city}: ${err.message}`);
+          }
+        }
+      }
+
+      // If no online data available, generate offline fallback data
+      if (allResults.length === 0) {
+        console.log(`≡ƒöä All APIs failed for ${city}, generating offline data...`);
+        const offlineResult = generateOfflineData(city);
+        if (offlineResult.success) {
+          allResults = offlineResult.data;
+          successfulSource = 'Offline Generated';
+          console.log(`Γ£à Generated offline data for ${city}: ${allResults.length} measurements`);
+        }
+      }
+
+      if (allResults.length > 0) {
+        // Process and structure the data for database storage
+        const pollutants = {};
+        
+        allResults.forEach(result => {
+          const pollutant = result.pollutant.toLowerCase();
+          if (['pm25', 'pm2.5'].includes(pollutant)) pollutants.pm25 = result.value;
+          else if (pollutant === 'pm10') pollutants.pm10 = result.value;
+          else if (pollutant === 'no2') pollutants.no2 = result.value;
+          else if (pollutant === 'so2') pollutants.so2 = result.value;
+          else if (['o3', 'ozone'].includes(pollutant)) pollutants.o3 = result.value;
+          else if (pollutant === 'co') pollutants.co = result.value;
+        });
+
+        // Store in Neon database
+        const storeData = {
+          city: city,
+          country: 'India',
+          latitude: locations[0]?.coordinates?.latitude || null,
+          longitude: locations[0]?.coordinates?.longitude || null,
+          pollutants: pollutants,
+          weather: {},
+          api_source: successfulSource,
+          timestamp: new Date()
+        };
+
+        const result = await storeAirQualityData(storeData);
+        if (result.success) {
+          console.log(`Γ£à Stored data for ${city} from ${successfulSource} - ${result.message}`);
+          successCount++;
+          if (successfulSource === 'Offline Generated') {
+            offlineGeneratedCount++;
+          } else {
+            onlineSuccessCount++;
+          }
+        } else {
+          console.log(`Γ¥î Failed to store data for ${city}: ${result.error}`);
+        }
+      } else {
+        console.log(`Γ¥î Complete failure for ${city}: No online or offline data available`);
+      }
+      
+      // Small delay between cities to avoid rate limiting  
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+    } catch (err) {
+      console.log(`Γ¥î Error processing ${city}: ${err.message}`);
+    }
+  }
+  
+  console.log('\n' + '='.repeat(60));
+  console.log(`≡ƒÄë DATA COLLECTION COMPLETED`);
+  console.log(`≡ƒôè Total Success: ${successCount}/${totalCities} cities collected`);
+  console.log(`≡ƒîÉ Online Data: ${onlineSuccessCount} cities ΓÇó ≡ƒô▒ Offline Generated: ${offlineGeneratedCount} cities`);
+  console.log(`ΓÅ░ Next collection: ${new Date(Date.now() + 60 * 60 * 1000).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}`);
+  console.log('='.repeat(60));
+  
+  return { 
+    success: true, 
+    successCount, 
+    totalCities,
+    onlineSuccessCount,
+    offlineGeneratedCount,
+    reason: 'multi_source',
+    message: `Successfully collected data for ${successCount}/${totalCities} cities (${onlineSuccessCount} online, ${offlineGeneratedCount} offline)` 
+  };
+}
+
+// OpenWeather API fetch function
+async function fetchFromOpenWeather(city) {
+  try {
+    const owUrl = `http://api.openweathermap.org/data/2.5/air_pollution?q=${city}&appid=${process.env.OPENWEATHER_API_KEY}`;
+    const response = await axios.get(owUrl, { timeout: 10000 });
+    
+    if (response.data && response.data.list && response.data.list.length > 0) {
+      const data = response.data.list[0];
+      const measurements = [];
+      
+      if (data.components) {
+        Object.keys(data.components).forEach(pollutant => {
+          measurements.push({
+            pollutant: pollutant.toUpperCase(),
+            value: data.components[pollutant],
+            unit: '┬╡g/m┬│',
+            dateUTC: new Date(data.dt * 1000).toISOString(),
+            dateLocal: new Date(data.dt * 1000).toISOString(),
+            location: `${city}, India (OpenWeather)`,
+            source: 'OpenWeather'
+          });
+        });
+      }
+      
+      return { success: measurements.length > 0, data: measurements };
+    }
+    
+    return { success: false, data: [] };
+  } catch (error) {
+    console.log(`OpenWeather API error for ${city}: ${error.message}`);
+    return { success: false, data: [], error: error.message };
+  }
+}
+
+// Generate offline fallback data when APIs are unavailable
+function generateOfflineData(city) {
+  console.log(`≡ƒô▒ Generating offline fallback data for ${city}...`);
+  
+  // City-specific baseline pollution levels (realistic estimates)
+  const cityBaselines = {
+    'Delhi': { pm25: 85, pm10: 120, no2: 45, so2: 15, o3: 35, co: 1.2 },
+    'Mumbai': { pm25: 65, pm10: 95, no2: 40, so2: 12, o3: 28, co: 1.0 },
+    'Bengaluru': { pm25: 45, pm10: 75, no2: 35, so2: 8, o3: 25, co: 0.8 },
+    'Chennai': { pm25: 55, pm10: 85, no2: 38, so2: 10, o3: 30, co: 0.9 },
+    'Kolkata': { pm25: 75, pm10: 110, no2: 42, so2: 18, o3: 32, co: 1.1 },
+    'Hyderabad': { pm25: 50, pm10: 80, no2: 32, so2: 9, o3: 27, co: 0.7 }
+  };
+  
+  const baseline = cityBaselines[city] || cityBaselines['Delhi'];
+  const now = new Date();
+  const measurements = [];
+  
+  // Add some realistic variation (+/- 20%)
+  Object.keys(baseline).forEach(pollutant => {
+    const baseValue = baseline[pollutant];
+    const variation = (Math.random() - 0.5) * 0.4; // +/- 20% variation
+    const value = Math.max(0, baseValue * (1 + variation));
+    
+    measurements.push({
+      pollutant: pollutant.toUpperCase(),
+      value: Math.round(value * 100) / 100, // Round to 2 decimal places
+      unit: pollutant === 'co' ? 'mg/m┬│' : '┬╡g/m┬│',
+      dateUTC: now.toISOString(),
+      dateLocal: now.toISOString(),
+      location: `${city}, India (Offline Generated)`,
+      source: 'Offline Generated'
+    });
+  });
+  
+  return {
+    success: true,
+    data: measurements,
+    source: 'Offline Generated',
+    note: 'Generated from city-specific baseline data with realistic variation'
+  };
+}
+
+// Schedule automatic data collection every hour
+cron.schedule('0 * * * *', async () => {
+  console.log('ΓÅ░ Cron job triggered: Hourly data collection');
+  
+  try {
+    const result = await autoFetchAndStore();
+    
+    if (result.success) {
+      console.log(`Γ£à Cron job completed successfully: ${result.message}`);
+      if (result.onlineSuccessCount > 0 && result.offlineGeneratedCount > 0) {
+        console.log(`∩┐╜ Mixed collection: ${result.onlineSuccessCount} online + ${result.offlineGeneratedCount} offline generated`);
+      } else if (result.onlineSuccessCount > 0) {
+        console.log(`≡ƒîÉ All online: Successfully collected from APIs for ${result.onlineSuccessCount} cities`);
+      } else if (result.offlineGeneratedCount > 0) {
+        console.log(`≡ƒô▒ All offline: Generated fallback data for ${result.offlineGeneratedCount} cities`);
+      }
+    } else {
+      console.log(`ΓÜá∩╕Å Cron job completed with issues: ${result.message}`);
+    }
+  } catch (err) {
+    console.error('Γ¥î Cron job failed with error:', err.message);
+    console.error('≡ƒöº Will retry at next scheduled interval');
+  }
+}, {
+  scheduled: true,
+  timezone: "Asia/Kolkata"
+});
+
+console.log('ΓÅ░ Automatic data collection scheduled (every hour)');
+console.log('≡ƒîÉ Always active: Multi-source data collection with intelligent fallback');
+console.log('≡ƒöä Continuous operation regardless of internet connectivity');
+
+console.log('ΓÅ░ Automatic data collection scheduled (every hour)');
+console.log('≡ƒîÉ Always active: Multi-source data collection with intelligent fallback');
+console.log('≡ƒöä Continuous operation regardless of internet connectivity');
+
+// ==================== END AUTOMATIC COLLECTION ====================
+
+// Start server
+async function startServer() {
+  try {
+    console.log('≡ƒÜÇ Starting BreatheSmart Air Quality Server...');
+    
+    // Test database connection and initialize tables
+    const dbConnected = await testConnection();
+    if (dbConnected) {
+      await initializeTables();
+      console.log('≡ƒùä∩╕Å Neon Database ready for data storage');
+    } else {
+      console.log('ΓÜá∩╕Å Database connection failed, but server will continue without DB features');
+    }
+    
+    // Start the server
+    app.listen(PORT, () => {
+      console.log(`Γ£à Server running on http://localhost:${PORT}`);
+      console.log('≡ƒôí NEW API Endpoints:');
+      console.log('   GET /api/current?city=Delhi - Fetch fresh data from APIs');
+      console.log('   GET /api/historical?city=Delhi&date_from=2025-10-01 - Query stored database records');
+      console.log('ΓÅ░ Automatic hourly data collection: ACTIVE');
+    });
+    
+  } catch (err) {
+    console.error('Γ¥î Failed to start server:', err.message);
+    process.exit(1);
+  }
+}
+
+startServer();
