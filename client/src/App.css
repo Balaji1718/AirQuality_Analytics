@@ -1,5 +1,17 @@
 body { font-family: Arial, Helvetica, sans-serif; margin: 0; background: transparent; color: #111; }
 
+/* Scrolling animation for live monitoring cities */
+@keyframes scroll-left {
+  0% { transform: translateX(100%); }
+  100% { transform: translateX(-100%); }
+}
+
+.scrolling-cities {
+  display: inline-block;
+  animation: scroll-left 20s linear infinite;
+  white-space: nowrap;
+}
+
 /* Main container layout */
 .main-container { max-width: 1400px; margin: 0 auto; padding: 20px; }
 

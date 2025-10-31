@@ -542,49 +542,72 @@ function App() {
       {/* Status Banners */}
       {statusBanners.historical && (
         <div style={{
-          backgroundColor: '#e3f2fd',
-          border: '1px solid #1976d2',
-          borderRadius: '8px',
-          padding: '12px 20px',
-          margin: '16px 20px',
-          color: '#1565c0'
+          backgroundColor: '#f0f8ff',
+          border: '1px solid #ddd',
+          borderRadius: '5px',
+          padding: '10px 15px',
+          margin: '10px 0',
+          fontSize: '14px'
         }}>
           <span style={{marginRight: '8px'}}>📊</span>
-          <strong>Historical Data:</strong> {statusBanners.historical.totalRecords} records
-          {statusBanners.historical.earliestDate && statusBanners.historical.latestDate && (
-            <span> from {statusBanners.historical.earliestDate} to {statusBanners.historical.latestDate}</span>
-          )}
-          {statusBanners.historical.citiesCount > 0 && (
-            <span> • {statusBanners.historical.citiesCount} cities monitored</span>
-          )}
-          <span> • Use date filters for historical searches</span>
+          <strong>Historical Data:</strong>
+          <span style={{ marginLeft: '8px' }}>
+            {statusBanners.historical.totalRecords} records
+            {statusBanners.historical.earliestDate && statusBanners.historical.latestDate && (
+              <span> from {statusBanners.historical.earliestDate} to {statusBanners.historical.latestDate}</span>
+            )}
+            {statusBanners.historical.citiesCount > 0 && (
+              <span> • {statusBanners.historical.citiesCount} cities monitored</span>
+            )}
+            <span> • Use date filters for historical searches</span>
+          </span>
         </div>
       )}
 
       {statusBanners.liveMonitoring && (
         <div style={{
-          backgroundColor: '#e8f5e8',
-          border: '1px solid #4caf50',
-          borderRadius: '8px',
-          padding: '12px 20px',
-          margin: '16px 20px',
-          color: '#2e7d32'
+          backgroundColor: '#f0f8ff',
+          border: '1px solid #ddd',
+          borderRadius: '5px',
+          padding: '10px 15px',
+          margin: '10px 0',
+          fontSize: '14px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px'
         }}>
-          <span style={{marginRight: '8px'}}>🔴</span>
-          <strong>Live Monitoring:</strong> {statusBanners.liveMonitoring.status}
-          {statusBanners.liveMonitoring.description && (
-            <span> • {statusBanners.liveMonitoring.description}</span>
-          )}
-          <span style={{
-            backgroundColor: '#4caf50',
-            color: 'white',
-            padding: '2px 8px',
-            borderRadius: '12px',
-            fontSize: '12px',
-            marginLeft: '8px'
+          <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+            <span style={{marginRight: '8px'}}>🔴</span>
+            <strong>Live Monitoring:</strong>
+          </div>
+          
+          <div style={{ 
+            flex: 1, 
+            overflow: 'hidden', 
+            whiteSpace: 'nowrap',
+            position: 'relative',
+            height: '20px'
           }}>
-            LIVE
-          </span>
+            <span className="scrolling-cities">
+              Delhi, India • Mumbai, India • Bengaluru, India • Chennai, India • Kolkata, India • Hyderabad, India • Delhi, India • Mumbai, India • Bengaluru, India • Chennai, India
+            </span>
+          </div>
+          
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+            <span style={{
+              backgroundColor: '#28a745',
+              color: 'white',
+              padding: '2px 6px',
+              borderRadius: '3px',
+              fontSize: '11px',
+              fontWeight: 'bold'
+            }}>
+              LIVE
+            </span>
+            <span style={{ fontSize: '12px', color: '#666' }}>
+              6 cities • Always active
+            </span>
+          </div>
         </div>
       )}
 
