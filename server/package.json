@@ -130,7 +130,8 @@
   "devDependencies": {},
   "scripts": {
     "start": "node index.js",
-    "dev": "nodemon index.js"
+    "dev": "nodemon index.js",
+    "build": "cd ../client && npm install && npm run build"
   },
   "keywords": [],
   "author": "",
