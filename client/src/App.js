@@ -252,6 +252,41 @@ function App() {
   const [advice, setAdvice] = useState(null);
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [statusBanners, setStatusBanners] = useState({ historical: null, liveMonitoring: null });
+
+  // Fetch status banners on page load
+  React.useEffect(() => {
+    const fetchStatusBanners = async () => {
+      try {
+        // Fetch historical data availability
+        const historicalRes = await axios.get("/api/data-availability");
+        const historicalData = historicalRes.data;
+        
+        // Fetch live monitoring status
+        const liveRes = await axios.get("/api/collection-status");
+        const liveData = liveRes.data;
+        
+        setStatusBanners({
+          historical: {
+            totalRecords: historicalData.data_availability?.overall_summary?.total_records || 0,
+            earliestDate: historicalData.data_availability?.overall_summary?.earliest_date,
+            latestDate: historicalData.data_availability?.overall_summary?.latest_date,
+            citiesCount: historicalData.data_availability?.cities_available?.length || 0
+          },
+          liveMonitoring: {
+            status: liveData.status,
+            description: liveData.description,
+            nextCollection: liveData.nextCollection,
+            capabilities: liveData.capabilities || []
+          }
+        });
+      } catch (err) {
+        console.error("Failed to fetch status banners:", err);
+      }
+    };
+    
+    fetchStatusBanners();
+  }, []);
 
   const handleShow = async () => {
     try {
@@ -503,6 +538,55 @@ function App() {
           </button>
         </div>
       </div>
+
+      {/* Status Banners */}
+      {statusBanners.historical && (
+        <div style={{
+          backgroundColor: '#e3f2fd',
+          border: '1px solid #1976d2',
+          borderRadius: '8px',
+          padding: '12px 20px',
+          margin: '16px 20px',
+          color: '#1565c0'
+        }}>
+          <span style={{marginRight: '8px'}}>📊</span>
+          <strong>Historical Data:</strong> {statusBanners.historical.totalRecords} records
+          {statusBanners.historical.earliestDate && statusBanners.historical.latestDate && (
+            <span> from {statusBanners.historical.earliestDate} to {statusBanners.historical.latestDate}</span>
+          )}
+          {statusBanners.historical.citiesCount > 0 && (
+            <span> • {statusBanners.historical.citiesCount} cities monitored</span>
+          )}
+          <span> • Use date filters for historical searches</span>
+        </div>
+      )}
+
+      {statusBanners.liveMonitoring && (
+        <div style={{
+          backgroundColor: '#e8f5e8',
+          border: '1px solid #4caf50',
+          borderRadius: '8px',
+          padding: '12px 20px',
+          margin: '16px 20px',
+          color: '#2e7d32'
+        }}>
+          <span style={{marginRight: '8px'}}>🔴</span>
+          <strong>Live Monitoring:</strong> {statusBanners.liveMonitoring.status}
+          {statusBanners.liveMonitoring.description && (
+            <span> • {statusBanners.liveMonitoring.description}</span>
+          )}
+          <span style={{
+            backgroundColor: '#4caf50',
+            color: 'white',
+            padding: '2px 8px',
+            borderRadius: '12px',
+            fontSize: '12px',
+            marginLeft: '8px'
+          }}>
+            LIVE
+          </span>
+        </div>
+      )}
 
       {/* Filters Section - Horizontal line of dropdowns */}
       <div className="filters-section">
