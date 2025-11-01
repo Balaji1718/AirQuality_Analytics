@@ -2275,4 +2275,10 @@ async function startServer() {
   }
 }
 
-startServer();
+// Export autoFetchAndStore for use in external scripts (GitHub Actions)
+module.exports = { autoFetchAndStore };
+
+// Only start server if this file is run directly (not imported)
+if (require.main === module) {
+  startServer();
+}
