@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import axios from "axios";
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -266,12 +266,18 @@ function App() {
         const liveRes = await axios.get("/api/collection-status");
         const liveData = liveRes.data;
         
+        // Use common date range instead of overall range for better accuracy
+        const commonRange = historicalData.data_availability?.common_data_range;
+        const hasCommonData = commonRange && commonRange.total_days > 0;
+        
         setStatusBanners({
           historical: {
             totalRecords: historicalData.data_availability?.overall_summary?.total_records || 0,
-            earliestDate: historicalData.data_availability?.overall_summary?.earliest_date,
-            latestDate: historicalData.data_availability?.overall_summary?.latest_date,
-            citiesCount: historicalData.data_availability?.cities_available?.length || 0
+            earliestDate: hasCommonData ? commonRange.start_date : historicalData.data_availability?.overall_summary?.earliest_date,
+            latestDate: hasCommonData ? commonRange.end_date : historicalData.data_availability?.overall_summary?.latest_date,
+            citiesCount: historicalData.data_availability?.cities_available?.length || 0,
+            commonDays: hasCommonData ? commonRange.total_days : 0,
+            isCommonRange: hasCommonData
           },
           liveMonitoring: {
             status: liveData.status,
@@ -287,6 +293,14 @@ function App() {
     
     fetchStatusBanners();
   }, []);
+
+  // Auto-refresh data when filters change (if data already exists)
+  useEffect(() => {
+    if (data && city) {
+      console.log("Filter changed, auto-refreshing data...");
+      handleShow();
+    }
+  }, [fromYear, toYear, fromMonth, toMonth, fromDay, toDay, fromHour, toHour]);
 
   const handleShow = async () => {
     try {
@@ -460,21 +474,25 @@ function App() {
       setData({ 
         city: payload.city, 
         snapshot, 
-        measurements: validResults, 
+        measurements: validResults,
+        results: validResults, // Add results for chart compatibility
         from: payload.from, 
         to: payload.to,
         apiInfo: payload.apiInfo,
         totalResults: payload.results.length,
         validResults: validResults.length
       });
-      if (body.fromYear || body.toYear || body.fromMonth || body.toMonth || body.fromDay || body.toDay) {
+      // Set chart mode based on filter complexity
+      const hasDateFilters = body.fromYear || body.toYear || body.fromMonth || body.toMonth || body.fromDay || body.toDay || body.fromHour || body.toHour;
+      if (hasDateFilters) {
         setChartMode("timeseries");
       } else {
         setChartMode("snapshot");
       }
 
       try {
-        const adviceRes = await axios.post("/api/insights", { city: payload.city, data: payload.results });
+        // Use filtered/valid results for advice generation
+        const adviceRes = await axios.post("/api/insights", { city: payload.city, data: validResults });
         setAdvice({
           text: adviceRes.data.insights || "",
           source: adviceRes.data.source || "Professional Health Advisory System",
@@ -494,17 +512,49 @@ function App() {
     }
   };
 
-  const snapshotSeries = data ? data.snapshot : [];
+  // Dynamic snapshot that updates based on current data and filters
+  const snapshotSeries = data ? (() => {
+    // Use the current measurements data to generate fresh snapshot
+    const currentData = data.results || data.measurements || [];
+    if (currentData.length === 0) return data.snapshot || [];
+    
+    // Recalculate snapshot from current filtered data
+    const dynamicSnapshot = groupSnapshot(currentData);
+    console.log("Dynamic snapshot calculated:", { 
+      originalSnapshot: data.snapshot?.length || 0, 
+      dynamicSnapshot: dynamicSnapshot.length,
+      sourceData: currentData.length 
+    });
+    
+    return dynamicSnapshot;
+  })() : [];
+  
   const timeSeries = data ? (() => {
-    const bucketType = (fromDay || toDay) ? "hour" : (fromMonth || toMonth) ? "day" : (fromYear || toYear) ? "month" : "hour";
-    // Use data.results instead of data.measurements for proper chart data
-    const buckets = bucketBy(data.results || [], bucketType);
+    // Determine bucket type based on filter granularity
+    let bucketType = "hour"; // default
+    if (fromYear || toYear) {
+      if (fromMonth || toMonth) {
+        if (fromDay || toDay) {
+          bucketType = "hour"; // Year+Month+Day = hourly view
+        } else {
+          bucketType = "day"; // Year+Month = daily view
+        }
+      } else {
+        bucketType = "month"; // Year only = monthly view
+      }
+    }
+    
+    // Use data.results for chart data (now properly available)
+    const resultsData = data.results || data.measurements || [];
+    const buckets = bucketBy(resultsData, bucketType);
+    
     console.log("Chart data processed:", { 
       buckets: buckets.length, 
       bucketType, 
-      rawResults: data.results?.length,
-      measurements: data.measurements?.length 
+      filters: { fromYear, toYear, fromMonth, toMonth, fromDay, toDay, fromHour, toHour },
+      rawResults: resultsData.length
     });
+    
     return buckets;
   })() : [];
 
@@ -554,7 +604,13 @@ function App() {
           <span style={{ marginLeft: '8px' }}>
             {statusBanners.historical.totalRecords} records
             {statusBanners.historical.earliestDate && statusBanners.historical.latestDate && (
-              <span> from {statusBanners.historical.earliestDate} to {statusBanners.historical.latestDate}</span>
+              <span>
+                {statusBanners.historical.isCommonRange ? (
+                  <span> • Common range: {statusBanners.historical.earliestDate} to {statusBanners.historical.latestDate} ({statusBanners.historical.commonDays} days with all 6 cities)</span>
+                ) : (
+                  <span> from {statusBanners.historical.earliestDate} to {statusBanners.historical.latestDate}</span>
+                )}
+              </span>
             )}
             {statusBanners.historical.citiesCount > 0 && (
               <span> • {statusBanners.historical.citiesCount} cities monitored</span>
