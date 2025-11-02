@@ -1,0 +1,33 @@
+{
+  "name": "airquality-analytics",
+  "version": "1.0.0",
+  "description": "Air Quality Analytics - Full Stack Application with React Frontend and Node.js Backend",
+  "main": "server/index.js",
+  "scripts": {
+    "build": "cd client && npm install && npm run build",
+    "start": "cd server && npm install && node index.js",
+    "install-server": "cd server && npm install",
+    "install-client": "cd client && npm install",
+    "dev": "concurrently \"npm run server\" \"npm run client\"",
+    "server": "cd server && npm run dev",
+    "client": "cd client && npm start"
+  },
+  "keywords": [
+    "air-quality",
+    "analytics",
+    "react",
+    "nodejs",
+    "postgresql",
+    "environmental-data"
+  ],
+  "author": "Balaji1718",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Balaji1718/AirQuality_Analytics.git"
+  }
+}
