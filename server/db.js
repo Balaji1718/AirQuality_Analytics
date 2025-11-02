@@ -26,42 +26,40 @@ async function testConnection() {
   }
 }
 
-// Initialize air quality table
+// Initialize air quality table - Updated to match your new table structure
 async function initializeTables() {
   try {
     const client = await pool.connect();
     
+    // Create table with your exact structure
     const createTableQuery = `
       CREATE TABLE IF NOT EXISTS air_quality_data (
         id SERIAL PRIMARY KEY,
-        city VARCHAR(100) NOT NULL,
+        city VARCHAR(100),
         country VARCHAR(100),
-        latitude DECIMAL(10, 8),
-        longitude DECIMAL(11, 8),
-        pm25 DECIMAL(10, 3),
-        pm10 DECIMAL(10, 3),
-        no2 DECIMAL(10, 3),
-        so2 DECIMAL(10, 3),
-        o3 DECIMAL(10, 3),
-        co DECIMAL(10, 3),
-        temperature DECIMAL(5, 2),
-        humidity DECIMAL(5, 2),
-        pressure DECIMAL(7, 2),
-        wind_speed DECIMAL(5, 2),
-        wind_direction INTEGER,
-        timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-        hour_recorded INTEGER,
-        api_source VARCHAR(50) DEFAULT 'OpenAQ'
+        latitude DECIMAL(9,6),
+        longitude DECIMAL(9,6),
+        aqi INTEGER,
+        pm25 DECIMAL(10,2),
+        pm10 DECIMAL(10,2),
+        no2 DECIMAL(10,2),
+        so2 DECIMAL(10,2),
+        co DECIMAL(10,2),
+        o3 DECIMAL(10,2),
+        temperature DECIMAL(5,2),
+        humidity DECIMAL(5,2),
+        data_source VARCHAR(50),
+        recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
       
-      CREATE INDEX IF NOT EXISTS idx_city_timestamp ON air_quality_data (city, timestamp DESC);
-      CREATE INDEX IF NOT EXISTS idx_timestamp ON air_quality_data (timestamp DESC);
+      CREATE INDEX IF NOT EXISTS idx_city_recorded_at ON air_quality_data (city, recorded_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_recorded_at ON air_quality_data (recorded_at DESC);
     `;
     
     await client.query(createTableQuery);
     client.release();
     
-    console.log('✅ Database tables initialized');
+    console.log('✅ Database tables initialized with new structure');
     return true;
   } catch (err) {
     console.error('❌ Failed to initialize tables:', err.message);
@@ -72,58 +70,66 @@ async function initializeTables() {
 // Store air quality data
 async function storeAirQualityData(data) {
   try {
-    const { city, country, latitude, longitude, pollutants = {}, weather = {}, api_source = 'OpenAQ', timestamp = new Date() } = data;
-    const currentTime = new Date(timestamp);
-    const hour = currentTime.getHours();
+    const { 
+      city, country, latitude, longitude, 
+      pollutants = {}, weather = {}, 
+      api_source = 'OpenAQ', data_source, 
+      timestamp = new Date(), recorded_at,
+      aqi 
+    } = data;
+    
+    const currentTime = new Date(recorded_at || timestamp);
     const client = await pool.connect();
 
-    // Check for existing record (prevent duplicates)
-    const checkQuery = 'SELECT id FROM air_quality_data WHERE city = $1 AND hour_recorded = $2 AND DATE(timestamp) = DATE($3) LIMIT 1';
-    const existingRecord = await client.query(checkQuery, [city, hour, currentTime]);
+    // Check for existing record (prevent duplicates within same hour)
+    const checkQuery = `
+      SELECT id FROM air_quality_data 
+      WHERE city = $1 AND DATE_TRUNC('hour', recorded_at) = DATE_TRUNC('hour', $2::timestamp) 
+      LIMIT 1
+    `;
+    const existingRecord = await client.query(checkQuery, [city, currentTime]);
     
     let result;
     if (existingRecord.rows.length > 0) {
       // Update existing record
       const updateQuery = `
         UPDATE air_quality_data SET
-          pm25 = $1, pm10 = $2, no2 = $3, so2 = $4, o3 = $5, co = $6,
-          temperature = $7, humidity = $8, pressure = $9, wind_speed = $10, wind_direction = $11,
-          api_source = $12, timestamp = $13
-        WHERE id = $14 RETURNING id, city, hour_recorded
+          aqi = $1, pm25 = $2, pm10 = $3, no2 = $4, so2 = $5, co = $6, o3 = $7,
+          temperature = $8, humidity = $9, data_source = $10, recorded_at = $11
+        WHERE id = $12 RETURNING id, city, recorded_at
       `;
       
       const updateValues = [
+        aqi || null,
         pollutants.pm25 || null, pollutants.pm10 || null, pollutants.no2 || null,
-        pollutants.so2 || null, pollutants.o3 || null, pollutants.co || null,
-        weather.temperature || null, weather.humidity || null, weather.pressure || null,
-        weather.wind_speed || null, weather.wind_direction || null, api_source,
-        currentTime, existingRecord.rows[0].id
+        pollutants.so2 || null, pollutants.co || null, pollutants.o3 || null,
+        weather.temperature || null, weather.humidity || null,
+        data_source || api_source, currentTime, existingRecord.rows[0].id
       ];
       
       result = await client.query(updateQuery, updateValues);
-      console.log(`🔄 Updated record for ${city} at hour ${hour}`);
+      console.log(`🔄 Updated record for ${city} at ${currentTime.toISOString()}`);
     } else {
       // Insert new record
       const insertQuery = `
         INSERT INTO air_quality_data (
-          city, country, latitude, longitude, pm25, pm10, no2, so2, o3, co,
-          temperature, humidity, pressure, wind_speed, wind_direction,
-          timestamp, hour_recorded, api_source
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
-        RETURNING id, city, hour_recorded
+          city, country, latitude, longitude, aqi, pm25, pm10, no2, so2, co, o3,
+          temperature, humidity, data_source, recorded_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        RETURNING id, city, recorded_at
       `;
 
       const values = [
         city, country || null, latitude || null, longitude || null,
+        aqi || null,
         pollutants.pm25 || null, pollutants.pm10 || null, pollutants.no2 || null,
-        pollutants.so2 || null, pollutants.o3 || null, pollutants.co || null,
-        weather.temperature || null, weather.humidity || null, weather.pressure || null,
-        weather.wind_speed || null, weather.wind_direction || null,
-        currentTime, hour, api_source
+        pollutants.so2 || null, pollutants.co || null, pollutants.o3 || null,
+        weather.temperature || null, weather.humidity || null,
+        data_source || api_source, currentTime
       ];
 
       result = await client.query(insertQuery, values);
-      console.log(`✅ Inserted new record for ${city} at hour ${hour}`);
+      console.log(`✅ Inserted new record for ${city} at ${currentTime.toISOString()}`);
     }
     
     client.release();
@@ -132,7 +138,7 @@ async function storeAirQualityData(data) {
       success: true,
       id: result.rows[0].id,
       city: result.rows[0].city,
-      hour: result.rows[0].hour_recorded,
+      recorded_at: result.rows[0].recorded_at,
       message: existingRecord.rows.length > 0 ? 'Updated' : 'Inserted'
     };
 
