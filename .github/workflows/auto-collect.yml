@@ -18,7 +18,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 18
-          # Remove cache to avoid lock file issues
+          cache: 'npm'
+          cache-dependency-path: 'scripts/package-lock.json'
 
       - name: Check project structure
         run: |
@@ -46,6 +47,10 @@ jobs:
         run: |
           cd scripts
           
+          echo "📁 Current working directory: $(pwd)"
+          echo "📋 Files in scripts directory:"
+          ls -la
+          
           # Function to install dependencies with retry logic
           install_deps() {
             local attempt=1
@@ -54,18 +59,21 @@ jobs:
             while [ $attempt -le $max_attempts ]; do
               echo "🔄 Dependency installation attempt $attempt/$max_attempts"
               
-              # Try npm ci first (if package-lock exists), then fallback to npm install
+              # Check if package-lock.json exists in current directory
               if [ -f package-lock.json ]; then
-                echo "📦 Using npm ci (lock file found)"
-                if npm ci --no-audit --prefer-offline; then
+                echo "📦 Found package-lock.json, using npm ci"
+                if npm ci --no-audit; then
                   echo "✅ Dependencies installed successfully with npm ci"
                   return 0
                 fi
                 echo "⚠️ npm ci failed, trying npm install..."
+              else
+                echo "📦 No package-lock.json found, using npm install"
               fi
               
-              echo "📦 Using npm install"
-              if npm install --no-audit --prefer-offline pg axios dotenv; then
+              # Fallback to npm install with specific packages
+              echo "📦 Installing specific packages: pg axios dotenv"
+              if npm install --no-audit pg axios dotenv; then
                 echo "✅ Dependencies installed successfully with npm install"
                 return 0
               fi
