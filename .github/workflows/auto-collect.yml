@@ -18,8 +18,6 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 18
-          cache: 'npm'
-          cache-dependency-path: 'scripts/package-lock.json'
 
       - name: Check project structure
         run: |
@@ -43,7 +41,7 @@ jobs:
             cat package.json
           fi
 
-      - name: Install dependencies with retry
+      - name: Install dependencies
         run: |
           cd scripts
           
@@ -51,79 +49,63 @@ jobs:
           echo "📋 Files in scripts directory:"
           ls -la
           
-          # Function to install dependencies with retry logic
-          install_deps() {
-            local attempt=1
-            local max_attempts=3
-            
-            while [ $attempt -le $max_attempts ]; do
-              echo "🔄 Dependency installation attempt $attempt/$max_attempts"
-              
-              # Check if package-lock.json exists in current directory
-              if [ -f package-lock.json ]; then
-                echo "📦 Found package-lock.json, using npm ci"
-                if npm ci --no-audit; then
-                  echo "✅ Dependencies installed successfully with npm ci"
-                  return 0
-                fi
-                echo "⚠️ npm ci failed, trying npm install..."
-              else
-                echo "📦 No package-lock.json found, using npm install"
-              fi
-              
-              # Fallback to npm install with specific packages
-              echo "📦 Installing specific packages: pg axios dotenv"
-              if npm install --no-audit pg axios dotenv; then
-                echo "✅ Dependencies installed successfully with npm install"
-                return 0
-              fi
-              
-              echo "❌ Attempt $attempt failed"
-              attempt=$((attempt + 1))
-              if [ $attempt -le $max_attempts ]; then
-                echo "⏳ Waiting 5 seconds before retry..."
-                sleep 5
-              fi
-            done
-            
-            echo "❌ All dependency installation attempts failed"
-            return 1
-          }
+          # Remove any existing node_modules and package-lock to start fresh
+          rm -rf node_modules package-lock.json || true
           
-          # Run installation with retry
-          install_deps
+          # Create minimal package.json if it doesn't exist
+          if [ ! -f package.json ]; then
+            echo "� Creating package.json..."
+            cat > package.json << EOF
+          {
+            "name": "air-quality-collection",
+            "version": "1.0.0",
+            "description": "Air quality data collection script",
+            "main": "collect_data.js",
+            "dependencies": {
+              "pg": "^8.11.0",
+              "axios": "^1.6.0",
+              "dotenv": "^16.0.0"
+            }
+          }
+          EOF
+          else
+            echo "📝 package.json exists"
+            cat package.json
+          fi
+          
+          # Install dependencies with npm install (no cache issues)
+          echo "📦 Installing dependencies with npm install..."
+          npm install --no-audit --no-fund
+          
+          echo "✅ Dependencies installed successfully"
 
       - name: Verify dependencies
         run: |
           cd scripts
           echo "📋 Installed packages:"
-          npm list --depth=0 || echo "Package listing failed but continuing..."
+          npm list --depth=0 || echo "Package listing not available, but continuing..."
           
-          echo "🔍 Checking required modules:"
+          echo "🔍 Testing required modules:"
           node -e "
-            try {
-              require('pg');
-              console.log('✅ pg module available');
-            } catch(e) {
-              console.log('❌ pg module missing');
+            const modules = ['pg', 'axios', 'dotenv'];
+            let allGood = true;
+            
+            modules.forEach(mod => {
+              try {
+                require(mod);
+                console.log('✅ ' + mod + ' module available');
+              } catch(e) {
+                console.log('❌ ' + mod + ' module missing: ' + e.message);
+                allGood = false;
+              }
+            });
+            
+            if (!allGood) {
+              console.log('❌ Some required modules are missing');
               process.exit(1);
             }
             
-            try {
-              require('axios');
-              console.log('✅ axios module available');
-            } catch(e) {
-              console.log('❌ axios module missing');
-              process.exit(1);
-            }
-            
-            try {
-              require('dotenv');
-              console.log('✅ dotenv module available');
-            } catch(e) {
-              console.log('❌ dotenv module missing');
-              process.exit(1);
-            }
+            console.log('✅ All required modules are available');
           "
 
       - name: Run automated data collection with retry
