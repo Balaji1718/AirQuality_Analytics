@@ -7,6 +7,8 @@ require("dotenv").config();
 
 // Import database functions
 const { testConnection, initializeTables, storeAirQualityData, pool } = require('./db');
+// Normalization helpers
+const { normalizePollutant, coerceNumber } = require('./utils/normalize');
 
 const app = express();
 app.use(cors());
@@ -868,15 +870,16 @@ async function fetchFromOpenWeather(cityName) {
       const data = response.data.list[0];
       const results = [];
       
-      // Convert OpenWeather format to our standard format
+      // Convert OpenWeather format to our standard format and normalize keys
       if (data.components) {
         Object.keys(data.components).forEach(pollutant => {
           const value = data.components[pollutant];
           if (value !== undefined) {
+            const key = pollutant.toString().toLowerCase().replace(/[^a-z0-9]/g, ''); // pm2_5 -> pm25
             results.push({
-              pollutant: pollutant.replace('_', '.'), // pm2_5 -> pm2.5
+              pollutant: key,
               value: value,
-              unit: '╬╝g/m┬│',
+              unit: key === 'co' ? 'mg/m³' : 'µg/m³',
               dateUTC: new Date(data.dt * 1000).toISOString(),
               dateLocal: new Date(data.dt * 1000).toISOString(),
               location: cityName,
@@ -2155,9 +2158,16 @@ async function autoFetchAndStore() {
     console.log(`\n🏙️  Processing ${cityInfo}`);
     
     try {
-      // Use existing location finding logic
-      const locations = await findLocationsByCity(city);
-      let hasOpenAQLocations = locations.length > 0;
+      // Use existing location finding logic - handle failures gracefully
+      let locations = [];
+      let hasOpenAQLocations = false;
+      try {
+        locations = await findLocationsByCity(city);
+        hasOpenAQLocations = locations.length > 0;
+      } catch (locationErr) {
+        console.log(`⚠️  Location finding failed: ${locationErr.message}`);
+        // Continue with empty locations, will fallback to offline data
+      }
 
       let allResults = [];
       let successfulSource = null;
@@ -2207,16 +2217,16 @@ async function autoFetchAndStore() {
           
           if (api === 'WAQI') {
             const waqiResult = await fetchFromWAQI(city);
-            if (waqiResult.success && waqiResult.data && waqiResult.data.length > 0) {
-              allResults = waqiResult.data;
+            if (waqiResult.success && waqiResult.results && waqiResult.results.length > 0) {
+              allResults = waqiResult.results;
               successfulSource = 'WAQI';
               console.log(`✅ ${api} success: ${allResults.length} measurements`);
               break;
             }
           } else if (api === 'OpenWeather') {
             const owResult = await fetchFromOpenWeather(city);
-            if (owResult.success && owResult.data && owResult.data.length > 0) {
-              allResults = owResult.data;
+            if (owResult.success && owResult.results && owResult.results.length > 0) {
+              allResults = owResult.results;
               successfulSource = 'OpenWeather';
               console.log(`✅ ${api} success: ${allResults.length} measurements`);
               break;
@@ -2246,29 +2256,18 @@ async function autoFetchAndStore() {
       const pollutants = {};
       let validMeasurements = 0;
       
+      // Normalize and coerce values so string numbers from APIs are accepted
       allResults.forEach(result => {
-        if (result && typeof result.value === 'number' && !isNaN(result.value)) {
-          const pollutant = result.pollutant.toLowerCase();
-          if (['pm25', 'pm2.5'].includes(pollutant)) {
-            pollutants.pm25 = result.value;
-            validMeasurements++;
-          } else if (pollutant === 'pm10') {
-            pollutants.pm10 = result.value;
-            validMeasurements++;
-          } else if (pollutant === 'no2') {
-            pollutants.no2 = result.value;
-            validMeasurements++;
-          } else if (pollutant === 'so2') {
-            pollutants.so2 = result.value;
-            validMeasurements++;
-          } else if (['o3', 'ozone'].includes(pollutant)) {
-            pollutants.o3 = result.value;
-            validMeasurements++;
-          } else if (pollutant === 'co') {
-            pollutants.co = result.value;
-            validMeasurements++;
-          }
-        }
+        if (!result) return;
+        const val = coerceNumber(result.value);
+        if (val === null) return;
+
+        const key = normalizePollutant(result.pollutant || result.parameter || result.pollutant);
+        if (!key) return;
+
+        // assign normalized pollutant value
+        pollutants[key] = val;
+        validMeasurements++;
       });
 
       // ENHANCED: Ensure all 6 pollutants are always present
@@ -2498,10 +2497,12 @@ async function fetchFromOpenWeather(city) {
       
       if (data.components) {
         Object.keys(data.components).forEach(pollutant => {
+          const rawKey = pollutant.toString();
+          const key = normalizePollutant(rawKey) || rawKey.toLowerCase().replace(/[^a-z0-9]/g, '');
           measurements.push({
-            pollutant: pollutant.toUpperCase(),
+            pollutant: key,
             value: data.components[pollutant],
-            unit: '┬╡g/m┬│',
+            unit: key === 'co' ? 'mg/m³' : 'µg/m³',
             dateUTC: new Date(data.dt * 1000).toISOString(),
             dateLocal: new Date(data.dt * 1000).toISOString(),
             location: `${city}, India (OpenWeather)`,
@@ -2539,15 +2540,15 @@ function generateOfflineData(city) {
   const measurements = [];
   
   // Add some realistic variation (+/- 20%)
-  Object.keys(baseline).forEach(pollutant => {
+    Object.keys(baseline).forEach(pollutant => {
     const baseValue = baseline[pollutant];
     const variation = (Math.random() - 0.5) * 0.4; // +/- 20% variation
     const value = Math.max(0, baseValue * (1 + variation));
     
     measurements.push({
-      pollutant: pollutant.toUpperCase(),
+      pollutant: pollutant, // keep lowercase keys (pm25, pm10, ...)
       value: Math.round(value * 100) / 100, // Round to 2 decimal places
-      unit: pollutant === 'co' ? 'mg/m┬│' : '┬╡g/m┬│',
+      unit: pollutant === 'co' ? 'mg/m³' : 'µg/m³',
       dateUTC: now.toISOString(),
       dateLocal: now.toISOString(),
       location: `${city}, India (Offline Generated)`,

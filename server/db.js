@@ -79,6 +79,9 @@ async function storeAirQualityData(data) {
     } = data;
     
     const currentTime = new Date(recorded_at || timestamp);
+
+    // Use centralized helper
+    const { coerceNumber } = require('./utils/normalize');
     const client = await pool.connect();
 
     // Check for existing record (prevent duplicates within same hour)
@@ -100,10 +103,10 @@ async function storeAirQualityData(data) {
       `;
       
       const updateValues = [
-        aqi || null,
-        pollutants.pm25 || null, pollutants.pm10 || null, pollutants.no2 || null,
-        pollutants.so2 || null, pollutants.co || null, pollutants.o3 || null,
-        weather.temperature || null, weather.humidity || null,
+        aqi ? parseInt(aqi, 10) : null,
+        coerceNumber(pollutants.pm25), coerceNumber(pollutants.pm10), coerceNumber(pollutants.no2),
+        coerceNumber(pollutants.so2), coerceNumber(pollutants.co), coerceNumber(pollutants.o3),
+        coerceNumber(weather.temperature), coerceNumber(weather.humidity),
         data_source || api_source, currentTime, existingRecord.rows[0].id
       ];
       
@@ -120,11 +123,11 @@ async function storeAirQualityData(data) {
       `;
 
       const values = [
-        city, country || null, latitude || null, longitude || null,
-        aqi || null,
-        pollutants.pm25 || null, pollutants.pm10 || null, pollutants.no2 || null,
-        pollutants.so2 || null, pollutants.co || null, pollutants.o3 || null,
-        weather.temperature || null, weather.humidity || null,
+        city, country || null, coerceNumber(latitude), coerceNumber(longitude),
+        aqi ? parseInt(aqi, 10) : null,
+        coerceNumber(pollutants.pm25), coerceNumber(pollutants.pm10), coerceNumber(pollutants.no2),
+        coerceNumber(pollutants.so2), coerceNumber(pollutants.co), coerceNumber(pollutants.o3),
+        coerceNumber(weather.temperature), coerceNumber(weather.humidity),
         data_source || api_source, currentTime
       ];
 
