@@ -8,6 +8,7 @@ on:
 jobs:
   collect:
     runs-on: ubuntu-latest
+    timeout-minutes: 15     # prevent hanging jobs
 
     steps:
       - name: Checkout repository
@@ -17,16 +18,109 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 18
-          cache: 'npm'
+          # Remove cache to avoid lock file issues
 
-      - name: Install dependencies
+      - name: Check project structure
+        run: |
+          echo "📁 Project structure:"
+          ls -la
+          echo "📁 Scripts directory:"
+          ls -la scripts/ || echo "Scripts directory not found"
+
+      - name: Initialize scripts directory
         run: |
           cd scripts
-          npm ci || (npm init -y && npm install pg axios dotenv)
+          echo "📦 Current directory contents:"
+          ls -la || echo "Directory empty"
+          
+          # Always ensure package.json exists
+          if [ ! -f package.json ]; then
+            echo "📝 Creating package.json..."
+            npm init -y
+          else
+            echo "📝 package.json already exists"
+            cat package.json
+          fi
 
-      - name: Run automated data collection
+      - name: Install dependencies with retry
+        run: |
+          cd scripts
+          
+          # Function to install dependencies with retry logic
+          install_deps() {
+            local attempt=1
+            local max_attempts=3
+            
+            while [ $attempt -le $max_attempts ]; do
+              echo "🔄 Dependency installation attempt $attempt/$max_attempts"
+              
+              # Try npm ci first (if package-lock exists), then fallback to npm install
+              if [ -f package-lock.json ]; then
+                echo "📦 Using npm ci (lock file found)"
+                if npm ci --no-audit --prefer-offline; then
+                  echo "✅ Dependencies installed successfully with npm ci"
+                  return 0
+                fi
+                echo "⚠️ npm ci failed, trying npm install..."
+              fi
+              
+              echo "📦 Using npm install"
+              if npm install --no-audit --prefer-offline pg axios dotenv; then
+                echo "✅ Dependencies installed successfully with npm install"
+                return 0
+              fi
+              
+              echo "❌ Attempt $attempt failed"
+              attempt=$((attempt + 1))
+              if [ $attempt -le $max_attempts ]; then
+                echo "⏳ Waiting 5 seconds before retry..."
+                sleep 5
+              fi
+            done
+            
+            echo "❌ All dependency installation attempts failed"
+            return 1
+          }
+          
+          # Run installation with retry
+          install_deps
+
+      - name: Verify dependencies
+        run: |
+          cd scripts
+          echo "📋 Installed packages:"
+          npm list --depth=0 || echo "Package listing failed but continuing..."
+          
+          echo "🔍 Checking required modules:"
+          node -e "
+            try {
+              require('pg');
+              console.log('✅ pg module available');
+            } catch(e) {
+              console.log('❌ pg module missing');
+              process.exit(1);
+            }
+            
+            try {
+              require('axios');
+              console.log('✅ axios module available');
+            } catch(e) {
+              console.log('❌ axios module missing');
+              process.exit(1);
+            }
+            
+            try {
+              require('dotenv');
+              console.log('✅ dotenv module available');
+            } catch(e) {
+              console.log('❌ dotenv module missing');
+              process.exit(1);
+            }
+          "
+
+      - name: Run automated data collection with retry
         env:
-          # Database Connection (Use DATABASE_URL in GitHub Secrets)
+          # Database Connection
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           NEON_DATABASE_URL: ${{ secrets.DATABASE_URL }}
           
@@ -35,17 +129,91 @@ jobs:
           OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
         run: |
           cd scripts
-          echo "🚀 Starting automatic hourly data collection..."
-          echo "Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          node collect_data.js
+          
+          # Function to run collection with retry logic
+          run_collection() {
+            local attempt=1
+            local max_attempts=3
+            
+            while [ $attempt -le $max_attempts ]; do
+              echo "🚀 Data collection attempt $attempt/$max_attempts"
+              echo "⏰ Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+              
+              # Set timeout for the node process (10 minutes)
+              if timeout 600 node collect_data.js; then
+                echo "✅ Data collection completed successfully"
+                return 0
+              else
+                local exit_code=$?
+                echo "❌ Data collection attempt $attempt failed (exit code: $exit_code)"
+                
+                if [ $exit_code -eq 124 ]; then
+                  echo "⏰ Collection timed out after 10 minutes"
+                elif [ $exit_code -eq 1 ]; then
+                  echo "💥 Collection script reported failure"
+                else
+                  echo "🔧 Unexpected exit code: $exit_code"
+                fi
+                
+                attempt=$((attempt + 1))
+                if [ $attempt -le $max_attempts ]; then
+                  echo "⏳ Waiting 30 seconds before retry..."
+                  sleep 30
+                fi
+              fi
+            done
+            
+            echo "❌ All collection attempts failed"
+            return 1
+          }
+          
+          # Check if collection script exists
+          if [ ! -f collect_data.js ]; then
+            echo "❌ collect_data.js not found in scripts directory"
+            echo "📁 Available files:"
+            ls -la
+            exit 1
+          fi
+          
+          echo "✅ Collection script found"
+          
+          # Verify environment variables
+          if [ -z "$DATABASE_URL" ]; then
+            echo "❌ DATABASE_URL environment variable not set"
+            exit 1
+          fi
+          echo "✅ DATABASE_URL is configured"
+          
+          # Run collection with retry
+          run_collection
 
-      - name: Verify collection success
-        if: success()
-        run: echo "✅ Hourly air quality data collection completed successfully"
+      - name: Collection status summary
+        if: always()
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "🎉 ✅ HOURLY DATA COLLECTION SUCCESSFUL"
+            echo "   ✅ All dependencies installed correctly"
+            echo "   ✅ Collection script executed successfully" 
+            echo "   ✅ Data inserted into Neon PostgreSQL database"
+            echo "   ⏰ Next collection: $(date -u -d '+1 hour' +%Y-%m-%dT%H:00:00Z)"
+          else
+            echo "❌ HOURLY DATA COLLECTION FAILED"
+            echo "   Please check the logs above for specific error details"
+            echo "   Common issues:"
+            echo "   - Database connection problems"
+            echo "   - API rate limits or network issues"
+            echo "   - Missing environment variables"
+          fi
 
-      - name: Handle collection failure
+      - name: Cleanup on failure
         if: failure()
         run: |
-          echo "❌ Hourly air quality data collection failed"
-          echo "Check the logs above for detailed error information"
-          exit 1
+          echo "🧹 Cleaning up after failure..."
+          cd scripts || exit 0
+          
+          echo "📊 Final system state:"
+          echo "Node version: $(node --version)"
+          echo "NPM version: $(npm --version)"
+          echo "Working directory: $(pwd)"
+          echo "Environment variables set:"
+          env | grep -E "(DATABASE_URL|WAQI_TOKEN|OPENWEATHER_API_KEY)" | sed 's/=.*/=***/' || echo "No relevant env vars found"
