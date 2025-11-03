@@ -13,6 +13,22 @@ Professional real-time air quality monitoring system with WHO health standards, 
 - **🔍 Advanced Filtering**: Year, month, day, hour-level filtering
 - **🎯 Real-time Monitoring**: Live pollution data from 500+ cities worldwide
 
+## 📊 Monitoring Capabilities
+
+### 📈 **Historical Monitoring**
+- **Years of Data**: Access historical pollution trends (2000-2025)
+- **Time-Series Analysis**: Track pollution patterns over months/years
+- **Trend Identification**: Identify seasonal and long-term pollution trends
+- **Comparative Studies**: Compare pollution levels across different time periods
+- **Advanced Filtering**: Filter by year, month, day, and specific time ranges
+
+### 🔴 **Live Real-Time Monitoring**
+- **Current Data**: Real-time air quality readings updated every hour
+- **Instant Alerts**: Immediate health status notifications based on WHO standards
+- **Live City Comparison**: Compare current pollution levels across multiple cities
+- **Automatic Updates**: Fresh data collection every hour via automated system
+- **Multi-API Sources**: Redundant data sources ensure continuous monitoring
+
 ## 🖥️ Screenshots
 
 - Clean, professional dashboard interface
