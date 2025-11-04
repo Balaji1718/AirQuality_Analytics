@@ -7,14 +7,76 @@
  */
 
 // Load environment variables from .env file if it exists
-try {
-    require('dotenv').config();
-} catch (error) {
-    // dotenv not available, continue without it
-}
+import dotenv from 'dotenv';
+dotenv.config();
 
-const { Pool } = require('pg');
-const axios = require('axios');
+import pkg from "pg";
+const { Pool } = pkg;
+import axios from 'axios';
+import { fileURLToPath } from 'url';
+
+// Database connection
+const pool = new Pool({
+  connectionString: process.env.NEON_DATABASE_URL || process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false }
+});
+
+export async function saveAirQualityData(data) {
+  // Record the current timestamp
+  const recordedAt = new Date();
+  
+  const query = `
+    INSERT INTO air_quality_data (
+      city, country, latitude, longitude, aqi,
+      pm25, pm10, no2, so2, co, o3,
+      temperature, humidity, data_source, recorded_at
+    ) VALUES (
+      $1, $2, $3, $4, $5,
+      $6, $7, $8, $9, $10, $11,
+      $12, $13, $14, $15
+    )
+    ON CONFLICT (city, recorded_hour)
+    DO UPDATE SET
+      aqi = EXCLUDED.aqi,
+      pm25 = EXCLUDED.pm25,
+      pm10 = EXCLUDED.pm10,
+      no2 = EXCLUDED.no2,
+      so2 = EXCLUDED.so2,
+      co = EXCLUDED.co,
+      o3 = EXCLUDED.o3,
+      temperature = EXCLUDED.temperature,
+      humidity = EXCLUDED.humidity,
+      data_source = EXCLUDED.data_source,
+      recorded_at = EXCLUDED.recorded_at;
+  `;
+
+  const values = [
+    data.city,
+    data.country || "India",
+    data.latitude,
+    data.longitude,
+    data.aqi,
+    data.pm25,
+    data.pm10,
+    data.no2,
+    data.so2,
+    data.co,
+    data.o3,
+    data.temperature,
+    data.humidity,
+    data.data_source || "Automated",
+    recordedAt
+  ];
+
+  try {
+    const result = await pool.query(query, values);
+    console.log(`✅ Data stored successfully for ${data.city}`);
+    return result;
+  } catch (error) {
+    console.error("❌ Database insertion failed:", error);
+    throw error;
+  }
+}
 
 // Configuration
 const CITIES = [
@@ -28,12 +90,6 @@ const CITIES = [
 
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 2000; // 2 seconds
-
-// Database connection
-const pool = new Pool({
-    connectionString: process.env.NEON_DATABASE_URL || process.env.DATABASE_URL,
-    ssl: { rejectUnauthorized: false }
-});
 
 // API Sources with fallback
 const API_SOURCES = {
@@ -273,69 +329,43 @@ async function fetchCityData(city) {
     return data;
 }
 
-/**
- * Check if record exists for city and hour
- */
-async function recordExists(city, recorded_at) {
-    const query = `
-        SELECT id FROM air_quality_data 
-        WHERE city = $1 AND DATE_TRUNC('hour', recorded_at) = DATE_TRUNC('hour', $2::timestamp)
-        LIMIT 1
-    `;
-    const result = await pool.query(query, [city, recorded_at]);
-    return result.rows.length > 0;
-}
+
 
 /**
- * Insert data into database
+ * Insert data into database using the new saveAirQualityData function with ON CONFLICT
  */
 async function insertCityData(cityData, recorded_at) {
-    const exists = await recordExists(cityData.city, recorded_at);
-    
-    if (exists) {
-        console.log(`⚠️  ${cityData.city}: Record already exists for hour ${recorded_at.toISOString()}, skipping`);
-        return { skipped: true, city: cityData.city };
-    }
-    
-    const insertQuery = `
-        INSERT INTO air_quality_data (
-            city, country, latitude, longitude, aqi,
-            pm25, pm10, no2, so2, co, o3,
-            temperature, humidity,
-            data_source, recorded_at
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-        RETURNING id, city, recorded_at
-    `;
-    
-    const values = [
-        cityData.city,
-        'India',
-        cityData.latitude,
-        cityData.longitude,
-        cityData.aqi,
-        cityData.pollutants.pm25 || null,
-        cityData.pollutants.pm10 || null,
-        cityData.pollutants.no2 || null,
-        cityData.pollutants.so2 || null,
-        cityData.pollutants.co || null,
-        cityData.pollutants.o3 || null,
-        cityData.weather.temperature || null,
-        cityData.weather.humidity || null,
-        cityData.source,
-        recorded_at
-    ];
-    
-    const result = await pool.query(insertQuery, values);
-    const inserted = result.rows[0];
-    
-    console.log(`✅ ${inserted.city} inserted at ${inserted.recorded_at.toISOString()}`);
-    return { 
-        inserted: true, 
-        city: inserted.city, 
-        id: inserted.id, 
-        recorded_at: inserted.recorded_at,
-        source: cityData.source
+    // Prepare data for the new saveAirQualityData function
+    const dataToSave = {
+        city: cityData.city,
+        country: 'India',
+        latitude: cityData.latitude,
+        longitude: cityData.longitude,
+        aqi: cityData.aqi,
+        pm25: cityData.pollutants.pm25 || null,
+        pm10: cityData.pollutants.pm10 || null,
+        no2: cityData.pollutants.no2 || null,
+        so2: cityData.pollutants.so2 || null,
+        co: cityData.pollutants.co || null,
+        o3: cityData.pollutants.o3 || null,
+        temperature: cityData.weather.temperature || null,
+        humidity: cityData.weather.humidity || null,
+        data_source: cityData.source
     };
+    
+    try {
+        const result = await saveAirQualityData(dataToSave);
+        console.log(`✅ ${cityData.city} stored/updated at ${recorded_at.toISOString()}`);
+        return { 
+            inserted: true, 
+            city: cityData.city,
+            recorded_at: recorded_at,
+            source: cityData.source
+        };
+    } catch (error) {
+        console.error(`❌ Failed to store ${cityData.city}:`, error.message);
+        throw error;
+    }
 }
 
 /**
@@ -467,7 +497,9 @@ async function collectData() {
 }
 
 // Run the collection if this script is executed directly
-if (require.main === module) {
+const __filename = fileURLToPath(import.meta.url);
+
+if (process.argv[1] === __filename) {
     collectData()
         .then(result => {
             console.log('\n🔚 Collection completed successfully');
@@ -483,4 +515,4 @@ if (require.main === module) {
         });
 }
 
-module.exports = { collectData };
+export { collectData };
