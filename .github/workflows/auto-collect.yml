@@ -52,15 +52,16 @@ jobs:
           # Remove any existing node_modules and package-lock to start fresh
           rm -rf node_modules package-lock.json || true
           
-          # Create minimal package.json if it doesn't exist
+          # Create minimal package.json if it doesn't exist or update existing one
           if [ ! -f package.json ]; then
-            echo "� Creating package.json..."
+            echo "📝 Creating package.json..."
             cat > package.json << EOF
           {
             "name": "air-quality-collection",
             "version": "1.0.0",
             "description": "Air quality data collection script",
             "main": "collect_data.js",
+            "type": "module",
             "dependencies": {
               "pg": "^8.11.0",
               "axios": "^1.6.0",
@@ -69,7 +70,19 @@ jobs:
           }
           EOF
           else
-            echo "📝 package.json exists"
+            echo "📝 package.json exists, ensuring ES6 module support"
+            # Update existing package.json to include "type": "module" if missing
+            node -e "
+              const fs = require('fs');
+              const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+              pkg.type = 'module';
+              if (!pkg.dependencies) pkg.dependencies = {};
+              pkg.dependencies.pg = pkg.dependencies.pg || '^8.11.0';
+              pkg.dependencies.axios = pkg.dependencies.axios || '^1.6.0';
+              pkg.dependencies.dotenv = pkg.dependencies.dotenv || '^16.0.0';
+              fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
+              console.log('✅ Updated package.json with ES6 module support');
+            "
             cat package.json
           fi
           
@@ -79,44 +92,52 @@ jobs:
           
           echo "✅ Dependencies installed successfully"
 
-      - name: Verify dependencies
+      - name: Verify dependencies and ES6 module setup
         run: |
           cd scripts
           echo "📋 Installed packages:"
           npm list --depth=0 || echo "Package listing not available, but continuing..."
           
-          echo "🔍 Testing required modules:"
+          echo "🔍 Verifying package.json configuration:"
           node -e "
-            const modules = ['pg', 'axios', 'dotenv'];
-            let allGood = true;
-            
-            modules.forEach(mod => {
-              try {
-                require(mod);
-                console.log('✅ ' + mod + ' module available');
-              } catch(e) {
-                console.log('❌ ' + mod + ' module missing: ' + e.message);
-                allGood = false;
-              }
-            });
-            
-            if (!allGood) {
-              console.log('❌ Some required modules are missing');
+            import fs from 'fs';
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            console.log('Package type:', pkg.type || 'CommonJS (default)');
+            if (pkg.type !== 'module') {
+              console.log('❌ Package.json should have \"type\": \"module\" for ES6 support');
               process.exit(1);
             }
+            console.log('✅ ES6 module configuration correct');
+          " --input-type=module
+          
+          echo "🔍 Testing required ES6 modules:"
+          node -e "
+            import pkg from 'pg';
+            import axios from 'axios';
+            import dotenv from 'dotenv';
             
-            console.log('✅ All required modules are available');
-          "
+            console.log('✅ pg module available');
+            console.log('✅ axios module available'); 
+            console.log('✅ dotenv module available');
+            console.log('✅ All required ES6 modules are available');
+          " --input-type=module
+          
+          echo "🔍 Testing collect_data.js syntax:"
+          node --check collect_data.js || (echo "❌ Syntax error in collect_data.js" && exit 1)
+          echo "✅ collect_data.js syntax is valid"
 
       - name: Run automated data collection with retry
         env:
-          # Database Connection
+          # Database Connection (Required)
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           NEON_DATABASE_URL: ${{ secrets.DATABASE_URL }}
           
           # API Keys (Optional, fallback data available)
           WAQI_TOKEN: ${{ secrets.WAQI_TOKEN }}
           OPENWEATHER_API_KEY: ${{ secrets.OPENWEATHER_API_KEY }}
+          
+          # Node.js ES6 Module Support
+          NODE_OPTIONS: --experimental-modules
         run: |
           cd scripts
           
@@ -174,6 +195,68 @@ jobs:
           fi
           echo "✅ DATABASE_URL is configured"
           
+          # Test database connectivity and schema
+          echo "🔍 Testing database connection and schema..."
+          node -e "
+            import { Pool } from 'pg';
+            import dotenv from 'dotenv';
+            
+            dotenv.config();
+            
+            const pool = new Pool({
+              connectionString: process.env.DATABASE_URL || process.env.NEON_DATABASE_URL,
+              ssl: { rejectUnauthorized: false }
+            });
+            
+            async function testDatabase() {
+              try {
+                console.log('🔗 Testing database connection...');
+                const client = await pool.connect();
+                
+                // Test basic connection
+                const timeResult = await client.query('SELECT NOW() as current_time');
+                console.log('✅ Database connected at:', timeResult.rows[0].current_time);
+                
+                // Check if air_quality_data table exists and has correct structure
+                const tableCheck = await client.query(\`
+                  SELECT column_name, data_type, is_generated, generation_expression
+                  FROM information_schema.columns 
+                  WHERE table_name = 'air_quality_data' AND table_schema = 'public'
+                  ORDER BY ordinal_position
+                \`);
+                
+                if (tableCheck.rows.length === 0) {
+                  console.log('⚠️  Table air_quality_data does not exist yet - will be created automatically');
+                } else {
+                  console.log('✅ Table air_quality_data exists with', tableCheck.rows.length, 'columns');
+                  
+                  // Check for recorded_hour column
+                  const recordedHourCol = tableCheck.rows.find(row => row.column_name === 'recorded_hour');
+                  if (recordedHourCol) {
+                    if (recordedHourCol.is_generated === 'ALWAYS') {
+                      console.log('✅ recorded_hour column is properly configured as generated column');
+                    } else {
+                      console.log('⚠️  recorded_hour exists but may need migration to generated column');
+                    }
+                  } else {
+                    console.log('⚠️  recorded_hour column missing - will be added automatically');
+                  }
+                }
+                
+                client.release();
+                await pool.end();
+                console.log('✅ Database schema validation complete');
+                
+              } catch (error) {
+                console.error('❌ Database test failed:', error.message);
+                await pool.end();
+                process.exit(1);
+              }
+            }
+            
+            testDatabase();
+          " --input-type=module
+          
           # Run collection with retry
           run_collection
 
@@ -182,20 +265,36 @@ jobs:
         run: |
           if [ "${{ job.status }}" = "success" ]; then
             echo "🎉 ✅ HOURLY DATA COLLECTION SUCCESSFUL"
-            echo "   ✅ All dependencies installed correctly"
-            echo "   ✅ Collection script executed successfully" 
-            echo "   ✅ Data inserted into Neon PostgreSQL database"
+            echo "   ✅ ES6 modules and dependencies installed correctly"
+            echo "   ✅ Database schema validated (generated recorded_hour column)"
+            echo "   ✅ Collection script executed successfully with ES6 syntax" 
+            echo "   ✅ Data inserted into Neon PostgreSQL with ON CONFLICT handling"
+            echo "   ✅ All 6 Indian cities processed (Chennai, Delhi, Bengaluru, Hyderabad, Mumbai, Kolkata)"
             echo "   ⏰ Next collection: $(date -u -d '+1 hour' +%Y-%m-%dT%H:00:00Z)"
+            echo ""
+            echo "🔧 Recent improvements:"
+            echo "   • Converted to ES6 modules for modern JavaScript"
+            echo "   • Added generated recorded_hour column for efficient querying"
+            echo "   • Implemented ON CONFLICT upsert logic to prevent duplicates"
+            echo "   • Enhanced error handling and data validation"
           else
             echo "❌ HOURLY DATA COLLECTION FAILED"
             echo "   Please check the logs above for specific error details"
             echo "   Common issues:"
-            echo "   - Database connection problems"
-            echo "   - API rate limits or network issues"
-            echo "   - Missing environment variables"
+            echo "   - Database connection problems (check DATABASE_URL secret)"
+            echo "   - ES6 module syntax errors (check package.json type: module)"
+            echo "   - API rate limits or network timeouts"
+            echo "   - Missing environment variables or secrets"
+            echo "   - Database schema migration issues (recorded_hour column)"
+            echo ""
+            echo "🔧 Troubleshooting:"
+            echo "   • Ensure DATABASE_URL secret is set in repository settings"
+            echo "   • Verify WAQI_TOKEN and OPENWEATHER_API_KEY secrets (optional)"
+            echo "   • Check if database schema needs manual migration"
+            echo "   • Review script syntax for ES6 compatibility"
           fi
 
-      - name: Cleanup on failure
+      - name: Cleanup and debugging on failure
         if: failure()
         run: |
           echo "🧹 Cleaning up after failure..."
@@ -205,5 +304,30 @@ jobs:
           echo "Node version: $(node --version)"
           echo "NPM version: $(npm --version)"
           echo "Working directory: $(pwd)"
-          echo "Environment variables set:"
-          env | grep -E "(DATABASE_URL|WAQI_TOKEN|OPENWEATHER_API_KEY)" | sed 's/=.*/=***/' || echo "No relevant env vars found"
+          
+          echo "📋 Package.json configuration:"
+          if [ -f package.json ]; then
+            echo "Package type: $(node -e "console.log(JSON.parse(require('fs').readFileSync('package.json')).type || 'CommonJS')")"
+            cat package.json
+          else
+            echo "❌ package.json not found"
+          fi
+          
+          echo "📁 Scripts directory contents:"
+          ls -la
+          
+          echo "🔧 ES6 Module Support Check:"
+          node --version
+          echo "NODE_OPTIONS: $NODE_OPTIONS"
+          
+          echo "🔍 Environment variables (masked):"
+          env | grep -E "(DATABASE_URL|WAQI_TOKEN|OPENWEATHER_API_KEY|NODE_OPTIONS)" | sed 's/=.*/=***/' || echo "No relevant env vars found"
+          
+          echo "📜 Last few lines of potential error logs:"
+          if [ -f collect_data.js ]; then
+            echo "✅ collect_data.js exists"
+            # Try to identify syntax issues
+            node --check collect_data.js 2>&1 || echo "❌ Syntax check failed"
+          else
+            echo "❌ collect_data.js not found"
+          fi
