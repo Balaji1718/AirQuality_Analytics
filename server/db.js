@@ -31,57 +31,115 @@ async function initializeTables() {
   try {
     const client = await pool.connect();
     
-    // Create table with updated structure including recorded_hour
-    const createTableQuery = `
-      CREATE TABLE IF NOT EXISTS air_quality_data (
-        id SERIAL PRIMARY KEY,
-        city VARCHAR(100),
-        country VARCHAR(100),
-        latitude DECIMAL(9,6),
-        longitude DECIMAL(9,6),
-        aqi INTEGER,
-        pm25 DECIMAL(10,2),
-        pm10 DECIMAL(10,2),
-        no2 DECIMAL(10,2),
-        so2 DECIMAL(10,2),
-        co DECIMAL(10,2),
-        o3 DECIMAL(10,2),
-        temperature DECIMAL(5,2),
-        humidity DECIMAL(5,2),
-        data_source VARCHAR(50),
-        recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        recorded_hour TIMESTAMP
-      );
-      
-      -- Add recorded_hour column if it doesn't exist (for existing databases)
-      ALTER TABLE air_quality_data 
-      ADD COLUMN IF NOT EXISTS recorded_hour TIMESTAMP;
-      
-      -- Update existing records to set recorded_hour (truncated to hour)
-      UPDATE air_quality_data 
-      SET recorded_hour = DATE_TRUNC('hour', recorded_at) 
-      WHERE recorded_hour IS NULL;
-      
-      -- Create unique constraint on city and recorded_hour
-      CREATE UNIQUE INDEX IF NOT EXISTS idx_city_recorded_hour 
-      ON air_quality_data (city, recorded_hour);
-      
-      CREATE INDEX IF NOT EXISTS idx_city_recorded_at ON air_quality_data (city, recorded_at DESC);
-      CREATE INDEX IF NOT EXISTS idx_recorded_at ON air_quality_data (recorded_at DESC);
+    // First check if the table exists and what columns it has
+    const checkTableQuery = `
+      SELECT column_name, data_type, is_generated
+      FROM information_schema.columns 
+      WHERE table_name = 'air_quality_data' AND table_schema = 'public'
     `;
     
-    await client.query(createTableQuery);
-    client.release();
+    let tableInfo;
+    try {
+      tableInfo = await client.query(checkTableQuery);
+    } catch (err) {
+      tableInfo = { rows: [] };
+    }
     
-    console.log('✅ Database tables initialized with new structure');
+    const existingColumns = tableInfo.rows.map(row => row.column_name);
+    const hasGeneratedRecordedHour = tableInfo.rows.some(row => 
+      row.column_name === 'recorded_hour' && row.is_generated === 'ALWAYS'
+    );
+    
+    if (tableInfo.rows.length === 0) {
+      // Create new table with proper structure
+      console.log('🆕 Creating new air_quality_data table...');
+      const createTableQuery = `
+        CREATE TABLE IF NOT EXISTS air_quality_data (
+          id SERIAL PRIMARY KEY,
+          city VARCHAR(100),
+          country VARCHAR(100),
+          latitude DECIMAL(9,6),
+          longitude DECIMAL(9,6),
+          aqi INTEGER,
+          pm25 DECIMAL(10,2),
+          pm10 DECIMAL(10,2),
+          no2 DECIMAL(10,2),
+          so2 DECIMAL(10,2),
+          co DECIMAL(10,2),
+          o3 DECIMAL(10,2),
+          temperature DECIMAL(5,2),
+          humidity DECIMAL(5,2),
+          data_source VARCHAR(50),
+          recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+          recorded_hour TIMESTAMP GENERATED ALWAYS AS (DATE_TRUNC('hour', recorded_at)) STORED
+        );
+        
+        -- Create unique constraint on city and recorded_hour
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_city_recorded_hour 
+        ON air_quality_data (city, recorded_hour);
+        
+        CREATE INDEX IF NOT EXISTS idx_city_recorded_at ON air_quality_data (city, recorded_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_recorded_at ON air_quality_data (recorded_at DESC);
+      `;
+      
+      await client.query(createTableQuery);
+      console.log('✅ New table created with generated recorded_hour column');
+      
+    } else if (hasGeneratedRecordedHour) {
+      // Table exists with generated column - this is correct, just ensure indexes
+      console.log('✅ Table exists with generated recorded_hour column');
+      
+      const indexQueries = `
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_city_recorded_hour 
+        ON air_quality_data (city, recorded_hour);
+        
+        CREATE INDEX IF NOT EXISTS idx_city_recorded_at ON air_quality_data (city, recorded_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_recorded_at ON air_quality_data (recorded_at DESC);
+      `;
+      
+      await client.query(indexQueries);
+      
+    } else {
+      // Table exists but needs migration to generated column
+      console.log('🔄 Migrating existing table to use generated recorded_hour...');
+      
+      if (existingColumns.includes('recorded_hour')) {
+        // Drop the old recorded_hour column
+        await client.query('ALTER TABLE air_quality_data DROP COLUMN IF EXISTS recorded_hour CASCADE');
+        console.log('🗑️  Dropped old recorded_hour column');
+      }
+      
+      // Add the new generated column
+      await client.query(`
+        ALTER TABLE air_quality_data 
+        ADD COLUMN recorded_hour TIMESTAMP GENERATED ALWAYS AS (DATE_TRUNC('hour', recorded_at)) STORED
+      `);
+      console.log('✅ Added generated recorded_hour column');
+      
+      // Create indexes
+      const indexQueries = `
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_city_recorded_hour 
+        ON air_quality_data (city, recorded_hour);
+        
+        CREATE INDEX IF NOT EXISTS idx_city_recorded_at ON air_quality_data (city, recorded_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_recorded_at ON air_quality_data (recorded_at DESC);
+      `;
+      
+      await client.query(indexQueries);
+      console.log('✅ Created indexes for generated column');
+    }
+    
+    client.release();
+    console.log('✅ Database tables initialized successfully');
     return true;
+    
   } catch (err) {
     console.error('❌ Failed to initialize tables:', err.message);
     return false;
   }
 }
 
-// Store air quality data
+// Store air quality data with ON CONFLICT handling
 async function storeAirQualityData(data) {
   try {
     const { 
@@ -97,70 +155,52 @@ async function storeAirQualityData(data) {
     // Use centralized helper
     const { coerceNumber } = require('./utils/normalize');
     const client = await pool.connect();
-
-    // Calculate recorded_hour (truncated to hour)
-    const recordedHour = new Date(currentTime);
-    recordedHour.setMinutes(0, 0, 0); // Set to exact hour
     
-    // Check for existing record (prevent duplicates within same hour)
-    const checkQuery = `
-      SELECT id FROM air_quality_data 
-      WHERE city = $1 AND recorded_hour = $2 
-      LIMIT 1
+    // Use ON CONFLICT to handle duplicates automatically
+    // Note: recorded_hour is a generated column, so PostgreSQL calculates it automatically
+    const upsertQuery = `
+      INSERT INTO air_quality_data (
+        city, country, latitude, longitude, aqi, pm25, pm10, no2, so2, co, o3,
+        temperature, humidity, data_source, recorded_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+      ON CONFLICT (city, recorded_hour)
+      DO UPDATE SET
+        aqi = EXCLUDED.aqi,
+        pm25 = EXCLUDED.pm25,
+        pm10 = EXCLUDED.pm10,
+        no2 = EXCLUDED.no2,
+        so2 = EXCLUDED.so2,
+        co = EXCLUDED.co,
+        o3 = EXCLUDED.o3,
+        temperature = EXCLUDED.temperature,
+        humidity = EXCLUDED.humidity,
+        data_source = EXCLUDED.data_source,
+        recorded_at = EXCLUDED.recorded_at
+      RETURNING id, city, recorded_at, recorded_hour
     `;
-    const existingRecord = await client.query(checkQuery, [city, recordedHour]);
-    
-    let result;
-    if (existingRecord.rows.length > 0) {
-      // Update existing record
-      const updateQuery = `
-        UPDATE air_quality_data SET
-          aqi = $1, pm25 = $2, pm10 = $3, no2 = $4, so2 = $5, co = $6, o3 = $7,
-          temperature = $8, humidity = $9, data_source = $10, recorded_at = $11, recorded_hour = $12
-        WHERE id = $13 RETURNING id, city, recorded_at
-      `;
-      
-      const updateValues = [
-        aqi ? parseInt(aqi, 10) : null,
-        coerceNumber(pollutants.pm25), coerceNumber(pollutants.pm10), coerceNumber(pollutants.no2),
-        coerceNumber(pollutants.so2), coerceNumber(pollutants.co), coerceNumber(pollutants.o3),
-        coerceNumber(weather.temperature), coerceNumber(weather.humidity),
-        data_source || api_source, currentTime, recordedHour, existingRecord.rows[0].id
-      ];
-      
-      result = await client.query(updateQuery, updateValues);
-      console.log(`🔄 Updated record for ${city} at ${currentTime.toISOString()}`);
-    } else {
-      // Insert new record
-      const insertQuery = `
-        INSERT INTO air_quality_data (
-          city, country, latitude, longitude, aqi, pm25, pm10, no2, so2, co, o3,
-          temperature, humidity, data_source, recorded_at, recorded_hour
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
-        RETURNING id, city, recorded_at
-      `;
 
-      const values = [
-        city, country || null, coerceNumber(latitude), coerceNumber(longitude),
-        aqi ? parseInt(aqi, 10) : null,
-        coerceNumber(pollutants.pm25), coerceNumber(pollutants.pm10), coerceNumber(pollutants.no2),
-        coerceNumber(pollutants.so2), coerceNumber(pollutants.co), coerceNumber(pollutants.o3),
-        coerceNumber(weather.temperature), coerceNumber(weather.humidity),
-        data_source || api_source, currentTime, recordedHour
-      ];
+    const values = [
+      city, country || null, coerceNumber(latitude), coerceNumber(longitude),
+      aqi ? parseInt(aqi, 10) : null,
+      coerceNumber(pollutants.pm25), coerceNumber(pollutants.pm10), coerceNumber(pollutants.no2),
+      coerceNumber(pollutants.so2), coerceNumber(pollutants.co), coerceNumber(pollutants.o3),
+      coerceNumber(weather.temperature), coerceNumber(weather.humidity),
+      data_source || api_source, currentTime
+    ];
 
-      result = await client.query(insertQuery, values);
-      console.log(`✅ Inserted new record for ${city} at ${currentTime.toISOString()}`);
-    }
+    const result = await client.query(upsertQuery, values);
     
     client.release();
+    
+    console.log(`✅ Data stored/updated for ${city} at ${currentTime.toISOString()}`);
     
     return {
       success: true,
       id: result.rows[0].id,
       city: result.rows[0].city,
       recorded_at: result.rows[0].recorded_at,
-      message: existingRecord.rows.length > 0 ? 'Updated' : 'Inserted'
+      recorded_hour: result.rows[0].recorded_hour,
+      message: 'Stored with conflict resolution'
     };
 
   } catch (err) {

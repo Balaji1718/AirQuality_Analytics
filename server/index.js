@@ -1441,7 +1441,7 @@ app.post("/api/hybrid-measurements", async (req, res) => {
       });
     }
     
-    console.log(`≡ƒöä Cache miss for ${cityName}, fetching fresh data...`);
+    console.log(`≡ƒöä Cache miss for ${cityName}, checking database first...`);
 
     // Parse and validate date filtering parameters
     const currentYear = new Date().getFullYear();
@@ -1540,6 +1540,91 @@ app.post("/api/hybrid-measurements", async (req, res) => {
     const results = [];
     let successfulSource = null;
     let allErrors = [];
+
+    // FIRST: Check local database for collected data
+    console.log(`≡ƒÄç Checking database for ${cityName}...`);
+    try {
+      const client = await pool.connect();
+      
+      // Build database query with filters
+      let dbQuery = 'SELECT * FROM air_quality_data WHERE 1=1';
+      const dbValues = [];
+      let paramCount = 0;
+
+      // City filter (required)
+      paramCount++;
+      dbQuery += ` AND LOWER(city) LIKE LOWER($${paramCount})`;
+      dbValues.push(`%${cityName}%`);
+
+      // Date filters
+      if (fromYear || toYear) {
+        if (date_from) {
+          paramCount++;
+          dbQuery += ` AND recorded_at >= $${paramCount}`;
+          dbValues.push(date_from);
+        }
+        if (date_to) {
+          paramCount++;
+          dbQuery += ` AND recorded_at <= $${paramCount}`;
+          dbValues.push(date_to);
+        }
+      }
+
+      // Add ordering and limit for performance
+      dbQuery += ` ORDER BY recorded_at DESC LIMIT 500`;
+
+      const dbResult = await client.query(dbQuery, dbValues);
+      client.release();
+
+      if (dbResult.rows.length > 0) {
+        console.log(`≡ƒÄÿ Found ${dbResult.rows.length} database records for ${cityName}`);
+        
+        // Convert database records to API format
+        const dbResults = [];
+        dbResult.rows.forEach(row => {
+          if (row.pm25 !== null) dbResults.push({
+            pollutant: 'pm25', parameter: 'pm25', value: parseFloat(row.pm25), 
+            unit: 'µg/m³', dateUTC: row.recorded_at, location: `${row.city}, ${row.country || 'India'}`,
+            city: row.city, coordinates: row.latitude && row.longitude ? [row.latitude, row.longitude] : null
+          });
+          if (row.pm10 !== null) dbResults.push({
+            pollutant: 'pm10', parameter: 'pm10', value: parseFloat(row.pm10), 
+            unit: 'µg/m³', dateUTC: row.recorded_at, location: `${row.city}, ${row.country || 'India'}`,
+            city: row.city, coordinates: row.latitude && row.longitude ? [row.latitude, row.longitude] : null
+          });
+          if (row.no2 !== null) dbResults.push({
+            pollutant: 'no2', parameter: 'no2', value: parseFloat(row.no2), 
+            unit: 'µg/m³', dateUTC: row.recorded_at, location: `${row.city}, ${row.country || 'India'}`,
+            city: row.city, coordinates: row.latitude && row.longitude ? [row.latitude, row.longitude] : null
+          });
+          if (row.so2 !== null) dbResults.push({
+            pollutant: 'so2', parameter: 'so2', value: parseFloat(row.so2), 
+            unit: 'µg/m³', dateUTC: row.recorded_at, location: `${row.city}, ${row.country || 'India'}`,
+            city: row.city, coordinates: row.latitude && row.longitude ? [row.latitude, row.longitude] : null
+          });
+          if (row.co !== null) dbResults.push({
+            pollutant: 'co', parameter: 'co', value: parseFloat(row.co), 
+            unit: 'mg/m³', dateUTC: row.recorded_at, location: `${row.city}, ${row.country || 'India'}`,
+            city: row.city, coordinates: row.latitude && row.longitude ? [row.latitude, row.longitude] : null
+          });
+          if (row.o3 !== null) dbResults.push({
+            pollutant: 'o3', parameter: 'o3', value: parseFloat(row.o3), 
+            unit: 'µg/m³', dateUTC: row.recorded_at, location: `${row.city}, ${row.country || 'India'}`,
+            city: row.city, coordinates: row.latitude && row.longitude ? [row.latitude, row.longitude] : null
+          });
+        });
+
+        if (dbResults.length > 0) {
+          results.push(...dbResults);
+          successfulSource = 'Database';
+        }
+      }
+    } catch (dbError) {
+      console.log(`≡ƒöä Database query failed: ${dbError.message}`);
+      allErrors.push(`Database: ${dbError.message}`);
+    }
+
+    // If database has no results, try external APIs as fallback
 
     // 1. Try OpenAQ first (primary source)
     try {
