@@ -139,7 +139,7 @@ async function initializeTables() {
   }
 }
 
-// Store air quality data with ON CONFLICT handling
+// Store air quality data with location validation and ON CONFLICT handling
 async function storeAirQualityData(data) {
   try {
     const { 
@@ -147,13 +147,66 @@ async function storeAirQualityData(data) {
       pollutants = {}, weather = {}, 
       api_source = 'OpenAQ', data_source, 
       timestamp = new Date(), recorded_at,
-      aqi 
+      aqi, validation 
     } = data;
     
     const currentTime = new Date(recorded_at || timestamp);
 
-    // Use centralized helper
+    // Use centralized helpers
     const { coerceNumber } = require('./utils/normalize');
+    const { validateLocationMatch, findIndianCity, isWithinCityBounds } = require('./utils/locationValidator');
+    
+    // Validate and normalize location data
+    let normalizedCity = city;
+    let normalizedCountry = country || 'India';
+    let validatedCoords = { lat: coerceNumber(latitude), lon: coerceNumber(longitude) };
+    
+    // For Indian cities, ensure we use canonical names and coordinates
+    const indianCity = findIndianCity(city);
+    if (indianCity) {
+      normalizedCity = indianCity.canonical;
+      normalizedCountry = 'India';
+      
+      // Use validated coordinates if not provided or if provided coordinates are invalid
+      if (!validatedCoords.lat || !validatedCoords.lon) {
+        validatedCoords = indianCity.coordinates;
+      } else {
+        // Validate provided coordinates are reasonable for this city
+        if (!isWithinCityBounds(validatedCoords.lat, validatedCoords.lon, indianCity)) {
+          console.log(`⚠️  Invalid coordinates for ${city}, using standard coordinates`);
+          validatedCoords = indianCity.coordinates;
+        }
+      }
+    }
+    
+    // Validate pollutant data
+    const validatedPollutants = {};
+    const pollutantLimits = {
+      pm25: { min: 0, max: 1000 },
+      pm10: { min: 0, max: 1000 },
+      no2: { min: 0, max: 500 },
+      so2: { min: 0, max: 500 },
+      co: { min: 0, max: 100 },
+      o3: { min: 0, max: 500 }
+    };
+    
+    Object.keys(pollutants).forEach(pollutant => {
+      const value = coerceNumber(pollutants[pollutant]);
+      if (value !== null && pollutantLimits[pollutant]) {
+        const { min, max } = pollutantLimits[pollutant];
+        if (value >= min && value <= max) {
+          validatedPollutants[pollutant] = value;
+        } else {
+          console.log(`⚠️  Invalid ${pollutant} value: ${value} (expected ${min}-${max}), skipping`);
+        }
+      } else if (value !== null) {
+        validatedPollutants[pollutant] = value; // For unknown pollutants, store as-is
+      }
+    });
+    
+    // Validate AQI
+    const validatedAqi = aqi && aqi >= 0 && aqi <= 500 ? parseInt(aqi, 10) : null;
+    
     const client = await pool.connect();
     
     // Use ON CONFLICT to handle duplicates automatically
@@ -165,46 +218,64 @@ async function storeAirQualityData(data) {
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
       ON CONFLICT (city, recorded_hour)
       DO UPDATE SET
-        aqi = EXCLUDED.aqi,
-        pm25 = EXCLUDED.pm25,
-        pm10 = EXCLUDED.pm10,
-        no2 = EXCLUDED.no2,
-        so2 = EXCLUDED.so2,
-        co = EXCLUDED.co,
-        o3 = EXCLUDED.o3,
-        temperature = EXCLUDED.temperature,
-        humidity = EXCLUDED.humidity,
+        aqi = CASE WHEN EXCLUDED.aqi IS NOT NULL THEN EXCLUDED.aqi ELSE air_quality_data.aqi END,
+        pm25 = CASE WHEN EXCLUDED.pm25 IS NOT NULL THEN EXCLUDED.pm25 ELSE air_quality_data.pm25 END,
+        pm10 = CASE WHEN EXCLUDED.pm10 IS NOT NULL THEN EXCLUDED.pm10 ELSE air_quality_data.pm10 END,
+        no2 = CASE WHEN EXCLUDED.no2 IS NOT NULL THEN EXCLUDED.no2 ELSE air_quality_data.no2 END,
+        so2 = CASE WHEN EXCLUDED.so2 IS NOT NULL THEN EXCLUDED.so2 ELSE air_quality_data.so2 END,
+        co = CASE WHEN EXCLUDED.co IS NOT NULL THEN EXCLUDED.co ELSE air_quality_data.co END,
+        o3 = CASE WHEN EXCLUDED.o3 IS NOT NULL THEN EXCLUDED.o3 ELSE air_quality_data.o3 END,
+        temperature = CASE WHEN EXCLUDED.temperature IS NOT NULL THEN EXCLUDED.temperature ELSE air_quality_data.temperature END,
+        humidity = CASE WHEN EXCLUDED.humidity IS NOT NULL THEN EXCLUDED.humidity ELSE air_quality_data.humidity END,
         data_source = EXCLUDED.data_source,
         recorded_at = EXCLUDED.recorded_at
-      RETURNING id, city, recorded_at, recorded_hour
+      RETURNING id, city, country, latitude, longitude, recorded_at, recorded_hour
     `;
 
     const values = [
-      city, country || null, coerceNumber(latitude), coerceNumber(longitude),
-      aqi ? parseInt(aqi, 10) : null,
-      coerceNumber(pollutants.pm25), coerceNumber(pollutants.pm10), coerceNumber(pollutants.no2),
-      coerceNumber(pollutants.so2), coerceNumber(pollutants.co), coerceNumber(pollutants.o3),
-      coerceNumber(weather.temperature), coerceNumber(weather.humidity),
-      data_source || api_source, currentTime
+      normalizedCity, 
+      normalizedCountry, 
+      validatedCoords.lat, 
+      validatedCoords.lon,
+      validatedAqi,
+      validatedPollutants.pm25 || null, 
+      validatedPollutants.pm10 || null, 
+      validatedPollutants.no2 || null,
+      validatedPollutants.so2 || null, 
+      validatedPollutants.co || null, 
+      validatedPollutants.o3 || null,
+      coerceNumber(weather.temperature), 
+      coerceNumber(weather.humidity),
+      data_source || api_source, 
+      currentTime
     ];
 
     const result = await client.query(upsertQuery, values);
     
     client.release();
     
-    console.log(`✅ Data stored/updated for ${city} at ${currentTime.toISOString()}`);
+    const stored = result.rows[0];
+    console.log(`✅ Data stored/updated for ${stored.city}, ${stored.country} at ${stored.recorded_at.toISOString()}`);
     
     return {
       success: true,
-      id: result.rows[0].id,
-      city: result.rows[0].city,
-      recorded_at: result.rows[0].recorded_at,
-      recorded_hour: result.rows[0].recorded_hour,
-      message: 'Stored with conflict resolution'
+      id: stored.id,
+      city: stored.city,
+      country: stored.country,
+      coordinates: { lat: stored.latitude, lon: stored.longitude },
+      recorded_at: stored.recorded_at,
+      recorded_hour: stored.recorded_hour,
+      validation: {
+        city_normalized: normalizedCity !== city,
+        coordinates_validated: validatedCoords,
+        pollutants_validated: Object.keys(validatedPollutants).length,
+        aqi_validated: validatedAqi !== null
+      },
+      message: 'Stored with location validation and conflict resolution'
     };
 
   } catch (err) {
-    console.error('❌ Failed to store data:', err.message);
+    console.error('❌ Failed to store validated data:', err.message);
     return { success: false, error: err.message };
   }
 }

@@ -59,60 +59,159 @@ async function loadLocations() {
 }
 
 async function findLocationsByCity(cityName) {
-  const locations = await loadLocations();
+  console.log(`🔍 Finding locations for city: ${cityName}`);
   
-  // City name mappings for better API compatibility
-  const cityMappings = {
-    'Mumbai': ['Mumbai', 'Bombay'],
-    'Chennai': ['Chennai', 'Madras'],
-    'Bengaluru': ['Bengaluru', 'Bangalore'],
-    'Delhi': ['Delhi', 'New Delhi'],
-    'Kolkata': ['Kolkata', 'Calcutta'],
-    'Hyderabad': ['Hyderabad']
-  };
-  
-  // Get all possible names for this city
-  const cityVariations = cityMappings[cityName] || [cityName];
-  
-  let matched = [];
-  
-  // Try each city name variation
-  for (const cityVariation of cityVariations) {
-    const lower = cityVariation.trim().toLowerCase();
+  try {
+    const { validateLocationMatch, findIndianCity, isWithinIndiaBounds } = require('./utils/locationValidator');
+    const locations = await loadLocations();
     
-    // First try to find locations that contain the city name
-    const cityMatches = locations.filter(loc => 
-      loc.name?.toLowerCase().includes(lower) ||
-      loc.locality?.toLowerCase()?.includes(lower) ||
-      loc.country?.name?.toLowerCase().includes(lower)
-    );
-    
-    matched = matched.concat(cityMatches);
-    
-    // If we found matches, break early
-    if (matched.length > 0) {
-      console.log(`🎯 Found ${matched.length} locations for ${cityVariation}`);
-      break;
+    // Check if this is a known Indian city for better validation
+    const knownIndianCity = findIndianCity(cityName);
+    if (knownIndianCity) {
+      console.log(`📍 Recognized Indian city: ${cityName} -> ${knownIndianCity.canonical}`);
     }
-  }
-  
-  // If still no matches, try broader search with all variations
-  if (matched.length === 0) {
+    
+    // Enhanced city name mappings with validation
+    const cityMappings = {
+      'Mumbai': ['Mumbai', 'Bombay'],
+      'Chennai': ['Chennai', 'Madras'],
+      'Bengaluru': ['Bengaluru', 'Bangalore'],
+      'Delhi': ['Delhi', 'New Delhi'],
+      'Kolkata': ['Kolkata', 'Calcutta'],
+      'Hyderabad': ['Hyderabad'],
+      'Pune': ['Pune', 'Poona'],
+      'Ahmedabad': ['Ahmedabad'],
+      'Jaipur': ['Jaipur'],
+      'Lucknow': ['Lucknow'],
+      'Kanpur': ['Kanpur'],
+      'Nagpur': ['Nagpur'],
+      'Visakhapatnam': ['Visakhapatnam', 'Vizag'],
+      'Bhopal': ['Bhopal'],
+      'Patna': ['Patna']
+    };
+    
+    // Get all possible names for this city
+    const cityVariations = cityMappings[cityName] || [cityName];
+    
+    let matched = [];
+    
+    // Try each city name variation with validation
     for (const cityVariation of cityVariations) {
       const lower = cityVariation.trim().toLowerCase();
-      const broaderMatches = locations.filter(loc => 
-        loc.name?.toLowerCase().indexOf(lower) !== -1
-      );
-      matched = matched.concat(broaderMatches);
       
+      // Find locations that match the city name
+      const cityMatches = locations.filter(loc => {
+        const locName = loc.name?.toLowerCase() || '';
+        const locLocality = loc.locality?.toLowerCase() || '';
+        const locCountry = loc.country?.name?.toLowerCase() || '';
+        
+        return locName.includes(lower) || 
+               locLocality.includes(lower) || 
+               (locCountry.includes(lower) && locCountry.includes('india'));
+      });
+      
+      // Validate each match
+      for (const loc of cityMatches) {
+        const validation = validateLocationMatch(
+          cityName,
+          loc.name || loc.locality,
+          loc.coordinates?.latitude,
+          loc.coordinates?.longitude,
+          loc.country?.name
+        );
+        
+        if (validation.isValid) {
+          matched.push({
+            ...loc,
+            validation: validation
+          });
+          console.log(`✅ Location validated: ${loc.name} (confidence: ${validation.confidence})`);
+        } else {
+          console.log(`❌ Location rejected: ${loc.name} - ${validation.reason}`);
+        }
+      }
+      
+      // If we found valid matches, break early
       if (matched.length > 0) {
-        console.log(`🔍 Broader search found ${matched.length} locations for ${cityVariation}`);
+        console.log(`🎯 Found ${matched.length} validated locations for ${cityVariation}`);
         break;
       }
     }
+    
+    // If still no matches, try broader search with validation
+    if (matched.length === 0) {
+      for (const cityVariation of cityVariations) {
+        const lower = cityVariation.trim().toLowerCase();
+        const broaderMatches = locations.filter(loc => 
+          loc.name?.toLowerCase().indexOf(lower) !== -1
+        );
+        
+        // Validate broader matches more strictly
+        for (const loc of broaderMatches) {
+          const validation = validateLocationMatch(
+            cityName,
+            loc.name,
+            loc.coordinates?.latitude,
+            loc.coordinates?.longitude,
+            loc.country?.name
+          );
+          
+          // Only accept high-confidence matches for broader search
+          if (validation.isValid && validation.confidence >= 0.7) {
+            matched.push({
+              ...loc,
+              validation: validation
+            });
+            console.log(`✅ Broader search validated: ${loc.name} (confidence: ${validation.confidence})`);
+          }
+        }
+        
+        if (matched.length > 0) {
+          console.log(`🔍 Broader search found ${matched.length} validated locations for ${cityVariation}`);
+          break;
+        }
+      }
+    }
+    
+    // Sort by validation confidence (highest first)
+    matched.sort((a, b) => (b.validation?.confidence || 0) - (a.validation?.confidence || 0));
+    
+    console.log(`✅ Total validated locations found for ${cityName}: ${matched.length}`);
+    return matched;
+    
+  } catch (error) {
+    console.error(`❌ Failed to find validated locations for ${cityName}:`, error.message);
+    
+    // Fallback to original behavior if validation fails
+    const locations = await loadLocations();
+    const cityMappings = {
+      'Mumbai': ['Mumbai', 'Bombay'],
+      'Chennai': ['Chennai', 'Madras'],
+      'Bengaluru': ['Bengaluru', 'Bangalore'],
+      'Delhi': ['Delhi', 'New Delhi'],
+      'Kolkata': ['Kolkata', 'Calcutta'],
+      'Hyderabad': ['Hyderabad']
+    };
+    
+    const cityVariations = cityMappings[cityName] || [cityName];
+    let matched = [];
+    
+    for (const cityVariation of cityVariations) {
+      const lower = cityVariation.trim().toLowerCase();
+      const cityMatches = locations.filter(loc => 
+        loc.name?.toLowerCase().includes(lower) ||
+        loc.locality?.toLowerCase()?.includes(lower)
+      );
+      matched = matched.concat(cityMatches);
+      
+      if (matched.length > 0) {
+        console.log(`⚠️  Fallback found ${matched.length} locations for ${cityVariation}`);
+        break;
+      }
+    }
+    
+    return matched;
   }
-  
-  return matched;
 }
 
 function groupSnapshot(results) {
@@ -695,17 +794,48 @@ app.get("/api/historical", async (req, res) => {
 app.get("/api/search-city/:name", async (req, res) => {
   try {
     const name = req.params.name || "";
+    const { findIndianCity } = require('./utils/locationValidator');
+    
+    // Check if this is a recognized Indian city
+    const knownCity = findIndianCity(name);
+    if (knownCity) {
+      console.log(`📍 City search: ${name} -> ${knownCity.canonical}`);
+    }
+    
     const matched = await findLocationsByCity(name);
-    if (matched.length === 0) return res.status(404).json({ error: `No locations found matching \"${name}\"` });
+    if (matched.length === 0) {
+      return res.status(404).json({ 
+        error: `No validated locations found matching "${name}"`,
+        suggestion: knownCity ? `Try searching for "${knownCity.canonical}"` : null
+      });
+    }
+    
+    // Filter to only include high-confidence validated matches
+    const validatedMatches = matched.filter(loc => 
+      loc.validation?.isValid && loc.validation?.confidence >= 0.6
+    );
+    
     res.json({ 
-      matchedCity: name, 
-      locations: matched.slice(0, 10).map(loc => ({
+      matchedCity: name,
+      knownCity: knownCity?.canonical || null,
+      locations: validatedMatches.slice(0, 10).map(loc => ({
         id: loc.id,
         name: loc.name,
-        country: loc.country?.name
-      }))
+        country: loc.country?.name,
+        coordinates: loc.coordinates,
+        validation: {
+          confidence: loc.validation?.confidence,
+          reason: loc.validation?.reason
+        }
+      })),
+      validation: {
+        totalFound: matched.length,
+        validated: validatedMatches.length,
+        highConfidence: validatedMatches.filter(l => l.validation?.confidence >= 0.8).length
+      }
     });
   } catch (err) {
+    console.error('Search city error:', err.message);
     const status = err.response?.status || 500;
     res.status(status).json({ error: err.response?.data || "Internal server error" });
   }
@@ -800,110 +930,213 @@ async function getCoordinatesForCity(cityName) {
 }
 
 async function fetchFromWAQI(cityName) {
+  const { validateLocationMatch, getStandardCoordinates } = require('./utils/locationValidator');
+  
   try {
-    const coords = await getCoordinatesForCity(cityName);
+    // Get validated coordinates for the city
+    const standardCoords = getStandardCoordinates(cityName);
     let url;
     
-    if (coords) {
-      // Try geo-based search first
-      url = `${API_SOURCES.waqi.baseUrl}/feed/geo:${coords.lat};${coords.lon}/?token=${API_SOURCES.waqi.token}`;
+    if (standardCoords) {
+      // Use validated coordinates for geo-based search
+      url = `${API_SOURCES.waqi.baseUrl}/feed/geo:${standardCoords.lat};${standardCoords.lon}/?token=${API_SOURCES.waqi.token}`;
+      console.log(`🎯 Using validated coordinates for ${cityName}: ${standardCoords.lat}, ${standardCoords.lon}`);
     } else {
-      // Fallback to city search
+      // Fallback to city search for non-Indian cities
       url = `${API_SOURCES.waqi.baseUrl}/feed/${encodeURIComponent(cityName)}/?token=${API_SOURCES.waqi.token}`;
+      console.log(`🔍 Using city search for ${cityName}`);
     }
     
     const response = await axios.get(url);
     
     if (response.data && response.data.status === "ok" && response.data.data) {
       const data = response.data.data;
+      
+      // Validate location match before processing data
+      const locationValidation = validateLocationMatch(
+        cityName, 
+        data.city?.name, 
+        data.city?.geo ? { lat: data.city.geo[0], lon: data.city.geo[1] } : null
+      );
+      
+      if (!locationValidation.isValid) {
+        console.log(`❌ WAQI location mismatch for ${cityName}: ${locationValidation.reason}`);
+        return { 
+          success: false, 
+          error: `Location mismatch: ${locationValidation.reason}`,
+          validation: locationValidation
+        };
+      }
+      
+      console.log(`✅ WAQI location validated for ${cityName} (confidence: ${locationValidation.confidence.toFixed(2)})`);
+      
       const results = [];
       
-      // Convert WAQI format to our standard format
+      // Convert WAQI format to our standard format with validation
       if (data.iaqi) {
         Object.keys(data.iaqi).forEach(pollutant => {
           if (data.iaqi[pollutant] && data.iaqi[pollutant].v !== undefined) {
-            results.push({
-              pollutant: pollutant,
-              value: data.iaqi[pollutant].v,
-              unit: 'AQI', // WAQI uses AQI scale
-              dateUTC: data.time?.s || new Date().toISOString(),
-              dateLocal: data.time?.s || new Date().toISOString(),
-              location: data.city?.name || cityName,
-              source: 'WAQI'
-            });
+            const value = data.iaqi[pollutant].v;
+            
+            // Validate pollutant values are reasonable
+            if (value >= 0 && value <= 500) { // AQI range validation
+              results.push({
+                pollutant: pollutant,
+                parameter: pollutant,
+                value: value,
+                unit: 'AQI', // WAQI uses AQI scale
+                dateUTC: data.time?.s || new Date().toISOString(),
+                dateLocal: data.time?.s || new Date().toISOString(),
+                location: `${locationValidation.normalized.city}, ${locationValidation.normalized.country}`,
+                city: locationValidation.normalized.city,
+                coordinates: locationValidation.normalized.coordinates ? 
+                  [locationValidation.normalized.coordinates.lat, locationValidation.normalized.coordinates.lon] : null,
+                source: 'WAQI',
+                validation: {
+                  confidence: locationValidation.confidence,
+                  method: standardCoords ? 'coordinates' : 'city_search'
+                }
+              });
+            }
           }
         });
+      }
+      
+      if (results.length === 0) {
+        return { success: false, error: 'No valid pollutant data found' };
       }
       
       return {
         success: true,
         source: 'WAQI',
-        city: data.city?.name || cityName,
+        city: locationValidation.normalized.city,
+        country: locationValidation.normalized.country,
         results: results,
         aqi: data.aqi,
-        coordinates: data.city?.geo
+        coordinates: locationValidation.normalized.coordinates,
+        validation: locationValidation
       };
     }
   } catch (err) {
-    console.log('WAQI API failed:', err.message);
+    console.log(`❌ WAQI API failed for ${cityName}:`, err.message);
     return { success: false, error: err.message };
   }
   
-  return { success: false, error: 'No data found' };
+  return { success: false, error: 'No data found from WAQI API' };
 }
 
 async function fetchFromOpenWeather(cityName) {
+  const { validateLocationMatch, getStandardCoordinates, isWithinIndiaBounds } = require('./utils/locationValidator');
+  
   try {
     if (!process.env.OPENWEATHER_API_KEY) {
       return { success: false, error: 'OpenWeather API key not configured' };
     }
     
-    const coords = await getCoordinatesForCity(cityName);
+    // Use validated coordinates for Indian cities
+    const standardCoords = getStandardCoordinates(cityName);
+    let coords = standardCoords;
+    
+    if (!coords) {
+      // For non-Indian cities, use geocoding but validate the result
+      coords = await getCoordinatesForCity(cityName);
+    }
+    
     if (!coords) {
       return { success: false, error: 'Could not get coordinates for city' };
     }
     
-    const url = `${API_SOURCES.openweather.baseUrl}?lat=${coords.lat}&lon=${coords.lon}&appid=${process.env.OPENWEATHER_API_KEY}`;
+    // Validate coordinates are reasonable
+    if (!isWithinIndiaBounds(coords.lat, coords.lon) && standardCoords) {
+      console.log(`⚠️  OpenWeather coordinates outside India bounds for ${cityName}, using standard coordinates`);
+      coords = standardCoords;
+    }
+    
+    const url = `${API_SOURCES.openweather.baseUrl}/air_pollution?lat=${coords.lat}&lon=${coords.lon}&appid=${process.env.OPENWEATHER_API_KEY}`;
+    console.log(`🌤️  Fetching OpenWeather data for ${cityName} at ${coords.lat}, ${coords.lon}`);
+    
     const response = await axios.get(url);
     
     if (response.data && response.data.list && response.data.list.length > 0) {
       const data = response.data.list[0];
+      
+      // Validate location match
+      const locationValidation = validateLocationMatch(
+        cityName, 
+        cityName, // OpenWeather doesn't return city name, use original
+        coords
+      );
+      
+      if (!locationValidation.isValid) {
+        console.log(`❌ OpenWeather location validation failed for ${cityName}: ${locationValidation.reason}`);
+        return { 
+          success: false, 
+          error: `Location validation failed: ${locationValidation.reason}`,
+          validation: locationValidation
+        };
+      }
+      
+      console.log(`✅ OpenWeather location validated for ${cityName} (confidence: ${locationValidation.confidence.toFixed(2)})`);
+      
       const results = [];
       
-      // Convert OpenWeather format to our standard format and normalize keys
+      // Convert OpenWeather format to our standard format with validation
       if (data.components) {
         Object.keys(data.components).forEach(pollutant => {
           const value = data.components[pollutant];
-          if (value !== undefined) {
-            const key = pollutant.toString().toLowerCase().replace(/[^a-z0-9]/g, ''); // pm2_5 -> pm25
-            results.push({
-              pollutant: key,
-              value: value,
-              unit: key === 'co' ? 'mg/m³' : 'µg/m³',
-              dateUTC: new Date(data.dt * 1000).toISOString(),
-              dateLocal: new Date(data.dt * 1000).toISOString(),
-              location: cityName,
-              source: 'OpenWeather'
-            });
+          if (value !== undefined && value >= 0) {
+            const normalizedPollutant = pollutant.toString().toLowerCase().replace(/[^a-z0-9]/g, ''); // pm2_5 -> pm25
+            const unit = normalizedPollutant === 'co' ? 'mg/m³' : 'µg/m³';
+            
+            // Validate pollutant values are reasonable
+            const maxValues = { pm25: 1000, pm10: 1000, no2: 500, so2: 500, co: 100, o3: 500 };
+            const maxValue = maxValues[normalizedPollutant] || 1000;
+            
+            if (value <= maxValue) {
+              results.push({
+                pollutant: normalizedPollutant,
+                parameter: normalizedPollutant,
+                value: value,
+                unit: unit,
+                dateUTC: new Date(data.dt * 1000).toISOString(),
+                dateLocal: new Date(data.dt * 1000).toISOString(),
+                location: `${locationValidation.normalized.city}, ${locationValidation.normalized.country}`,
+                city: locationValidation.normalized.city,
+                coordinates: [coords.lat, coords.lon],
+                source: 'OpenWeather',
+                validation: {
+                  confidence: locationValidation.confidence,
+                  method: standardCoords ? 'standard_coordinates' : 'geocoding'
+                }
+              });
+            } else {
+              console.log(`⚠️  Skipping invalid ${normalizedPollutant} value: ${value} > ${maxValue}`);
+            }
           }
         });
+      }
+      
+      if (results.length === 0) {
+        return { success: false, error: 'No valid pollutant data found' };
       }
       
       return {
         success: true,
         source: 'OpenWeather',
-        city: cityName,
+        city: locationValidation.normalized.city,
+        country: locationValidation.normalized.country,
         results: results,
         aqi: data.main?.aqi,
-        coordinates: [coords.lat, coords.lon]
+        coordinates: coords,
+        validation: locationValidation
       };
     }
   } catch (err) {
-    console.log('OpenWeather API failed:', err.message);
+    console.log(`❌ OpenWeather API failed for ${cityName}:`, err.message);
     return { success: false, error: err.message };
   }
   
-  return { success: false, error: 'No data found' };
+  return { success: false, error: 'No data found from OpenWeather API' };
 }
 
 function lastDayOfMonth(year, monthIndex) {
@@ -2036,6 +2269,102 @@ app.get("/api/missing-countries", async (req, res) => {
 
 
 
+
+// New API endpoint for location suggestions and validation
+app.get("/api/location-suggestions/:query", async (req, res) => {
+  try {
+    const query = req.params.query || "";
+    const { findIndianCity, getAllIndianCities, validateLocationMatch } = require('./utils/locationValidator');
+    
+    if (query.length < 2) {
+      return res.json({
+        success: true,
+        suggestions: [],
+        message: "Query too short"
+      });
+    }
+    
+    // Get all Indian cities for suggestions
+    const allCities = getAllIndianCities();
+    const queryLower = query.toLowerCase();
+    
+    // Find matching cities
+    const suggestions = allCities
+      .filter(city => 
+        city.canonical.toLowerCase().includes(queryLower) ||
+        city.aliases.some(alias => alias.toLowerCase().includes(queryLower))
+      )
+      .slice(0, 10)
+      .map(city => ({
+        name: city.canonical,
+        state: city.state,
+        coordinates: city.coordinates,
+        aliases: city.aliases,
+        confidence: city.canonical.toLowerCase().startsWith(queryLower) ? 1.0 : 0.8
+      }))
+      .sort((a, b) => b.confidence - a.confidence);
+    
+    res.json({
+      success: true,
+      query: query,
+      suggestions: suggestions,
+      count: suggestions.length
+    });
+    
+  } catch (error) {
+    console.error('Location suggestions error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: "Failed to get location suggestions",
+      details: error.message
+    });
+  }
+});
+
+// API endpoint to validate a specific location
+app.get("/api/validate-location/:city", async (req, res) => {
+  try {
+    const city = req.params.city || "";
+    const { validateLocationMatch, findIndianCity } = require('./utils/locationValidator');
+    
+    // Check if it's a known Indian city
+    const knownCity = findIndianCity(city);
+    
+    if (knownCity) {
+      res.json({
+        success: true,
+        city: city,
+        validation: {
+          isValid: true,
+          confidence: 1.0,
+          canonical: knownCity.canonical,
+          state: knownCity.state,
+          coordinates: knownCity.coordinates,
+          reason: "Known Indian city"
+        }
+      });
+    } else {
+      res.json({
+        success: true,
+        city: city,
+        validation: {
+          isValid: false,
+          confidence: 0.0,
+          reason: "City not found in Indian cities database",
+          suggestion: "Try using location suggestions API"
+        }
+      });
+    }
+    
+  } catch (error) {
+    console.error('Location validation error:', error.message);
+    res.status(500).json({
+      success: false,
+      error: "Failed to validate location",
+      details: error.message
+    });
+  }
+});
 
 // Get Indian states and locations summary  
 app.get("/api/india-summary", async (req, res) => {
