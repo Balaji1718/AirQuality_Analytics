@@ -293,13 +293,26 @@ app.get('/api/locations', async (req, res) => {
     
     // Return summary with top results
     const results = filtered.slice(0, parseInt(limit));
-    const countries = [...new Set(locations.map(l => l.country?.name).filter(Boolean))];
+    
+    // Build country summary
+    const countrySummary = {};
+    locations.forEach(loc => {
+      const country = loc.country?.name || 'Unknown';
+      if (!countrySummary[country]) {
+        countrySummary[country] = 0;
+      }
+      countrySummary[country]++;
+    });
     
     res.json({
       total: filtered.length,
       returned: results.length,
       limit: parseInt(limit),
-      countries_available: countries.length,
+      countries_available: Object.keys(countrySummary).length,
+      country_coverage: Object.entries(countrySummary)
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 30)
+        .map(([country, count]) => ({ country, locations: count })),
       results: results.map(loc => ({
         id: loc.id,
         name: loc.name,
@@ -314,6 +327,48 @@ app.get('/api/locations', async (req, res) => {
     console.error('Location listing error:', error);
     res.status(500).json({ 
       error: 'Failed to list locations',
+      details: error.message
+    });
+  }
+});
+
+/**
+ * GET /api/locations/summary - Get summary of all available countries and coverage
+ */
+app.get('/api/locations/summary', async (req, res) => {
+  try {
+    const locations = await loadLocations();
+    
+    const countrySummary = {};
+    locations.forEach(loc => {
+      const country = loc.country?.name || 'Unknown';
+      if (!countrySummary[country]) {
+        countrySummary[country] = 0;
+      }
+      countrySummary[country]++;
+    });
+    
+    const sorted = Object.entries(countrySummary)
+      .sort((a, b) => b[1] - a[1])
+      .map(([country, count]) => ({ country, locations: count }));
+    
+    res.json({
+      total_locations: locations.length,
+      total_countries: Object.keys(countrySummary).length,
+      coverage: sorted,
+      available_globally: {
+        'United States': countrySummary['United States'] || 0,
+        'India': countrySummary['India'] || 0,
+        'China': countrySummary['China'] || 0,
+        'United Kingdom': countrySummary['United Kingdom'] || 0,
+        'Germany': countrySummary['Germany'] || 0,
+        'Australia': countrySummary['Australia'] || 0
+      }
+    });
+  } catch (error) {
+    console.error('Coverage summary error:', error);
+    res.status(500).json({ 
+      error: 'Failed to get coverage summary',
       details: error.message
     });
   }
