@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import axios from "axios";
 import {
-  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+  ResponsiveContainer, XAxis, YAxis, CartesianGrid, Tooltip,
   LineChart, Line
 } from "recharts";
 import "./App.css";
@@ -253,6 +253,19 @@ function App() {
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [statusBanners, setStatusBanners] = useState({ historical: null, liveMonitoring: null });
+  const [assistantOpen, setAssistantOpen] = useState(false);
+  const [assistantInput, setAssistantInput] = useState("");
+  const [assistantLoading, setAssistantLoading] = useState(false);
+  const [assistantMessages, setAssistantMessages] = useState([
+    {
+      role: "assistant",
+      content: "Ask me anything general or app-related about air quality trends, filters, and health recommendations.",
+      source: "BreatheSmart Assistant"
+    }
+  ]);
+  const availablePollutants = ["PM25", "PM10", "NO2", "SO2", "O3", "CO", "T", "H", "NO", "P", "NH3"];
+  const [selectedPollutants, setSelectedPollutants] = useState(["PM10", "NO2", "O3"]);
+  const [hoveredPollutant, setHoveredPollutant] = useState(null);
 
   // Fetch status banners on page load
   React.useEffect(() => {
@@ -293,14 +306,6 @@ function App() {
     
     fetchStatusBanners();
   }, []);
-
-  // Auto-refresh data when filters change (if data already exists)
-  useEffect(() => {
-    if (data && city) {
-      console.log("Filter changed, auto-refreshing data...");
-      handleShow();
-    }
-  }, [fromYear, toYear, fromMonth, toMonth, fromDay, toDay, fromHour, toHour]);
 
   const handleShow = async () => {
     try {
@@ -493,22 +498,72 @@ function App() {
       try {
         // Use filtered/valid results for advice generation
         const adviceRes = await axios.post("/api/insights", { city: payload.city, data: validResults });
+        const adviceSource = adviceRes.data.source || "Health Advisory System";
         setAdvice({
           text: adviceRes.data.insights || "",
-          source: adviceRes.data.source || "Professional Health Advisory System",
-          isAI: adviceRes.data.source === "Gemini AI"
+          source: adviceSource,
+          isAI: adviceSource.includes("Groq") || adviceSource.includes("OpenRouter")
         });
       } catch (err) {
-        setAdvice({
-          text: payload.localAdvice || "",
-          source: payload.apiInfo?.adviceSource || "Rule-based system",
-          isAI: payload.apiInfo?.adviceSource === "Gemini AI"
-        });
+        console.error("Advice generation failed:", err.message);
+        setError(err.response?.data?.error || "Failed to generate advice");
       }
       setIsLoading(false);
     } catch (err) {
       setError(err.response?.data?.error || "Failed to fetch data");
       setIsLoading(false);
+    }
+  };
+
+  const handleAssistantSend = async () => {
+    const question = assistantInput.trim();
+    if (!question || assistantLoading) {
+      return;
+    }
+
+    const hasDateFilters = Boolean(fromYear || toYear || fromMonth || toMonth || fromDay || toDay || fromHour || toHour);
+    const assistantContext = {
+      city: city || data?.city || "",
+      hasData: Boolean(data),
+      hasDateFilters,
+      chartMode,
+      selectedPollutants,
+      recordCount: data?.totalResults || data?.validResults || 0,
+      filters: {
+        fromYear,
+        toYear,
+        fromMonth,
+        toMonth,
+        fromDay,
+        toDay,
+        fromHour,
+        toHour
+      }
+    };
+
+    setAssistantMessages(previous => [...previous, { role: "user", content: question }]);
+    setAssistantInput("");
+    setAssistantLoading(true);
+
+    try {
+      const response = await axios.post("/api/assistant", {
+        question,
+        appContext: assistantContext
+      });
+
+      setAssistantMessages(previous => [...previous, {
+        role: "assistant",
+        content: response.data?.answer || "I could not generate a response right now.",
+        source: response.data?.source || "BreatheSmart Assistant"
+      }]);
+    } catch (err) {
+      setAssistantMessages(previous => [...previous, {
+        role: "assistant",
+        content: "Unable to reach the assistant at the moment. Please try again.",
+        source: "BreatheSmart Assistant"
+      }]);
+    } finally {
+      setAssistantLoading(false);
     }
   };
 
@@ -528,6 +583,32 @@ function App() {
     
     return dynamicSnapshot;
   })() : [];
+
+  const hasDateFilters = Boolean(fromYear || toYear || fromMonth || toMonth || fromDay || toDay || fromHour || toHour);
+  const filterSummaryParts = [
+    fromYear || toYear ? `Years ${fromYear || "Any"}-${toYear || "Any"}` : "",
+    fromMonth || toMonth ? `Months ${fromMonth || "Any"}-${toMonth || "Any"}` : "",
+    fromDay || toDay ? `Days ${fromDay || "Any"}-${toDay || "Any"}` : "",
+    fromHour || toHour ? `Hours ${fromHour || "Any"}-${toHour || "Any"}` : ""
+  ].filter(Boolean);
+  const tableTimelineHeader = hasDateFilters
+    ? `Data from filters${filterSummaryParts.length ? ` (${filterSummaryParts.join(" • ")})` : ""}`
+    : "Current Data";
+  const visiblePollutants = selectedPollutants.length ? selectedPollutants : availablePollutants;
+  const snapshotLookup = new Map(snapshotSeries.map(item => [item.pollutant, item]));
+  const getTableRowForPollutant = pollutant => {
+    const snapshotRow = snapshotLookup.get(pollutant) || null;
+    const originalMeasurement = data?.measurements?.find(m => m.pollutant?.toUpperCase() === pollutant) || null;
+    return {
+      pollutant,
+      snapshotRow,
+      originalMeasurement,
+      value: snapshotRow?.value ?? "N/V",
+      unit: snapshotRow ? getActualUnit(pollutant, snapshotRow.unit) : "N/V",
+      timeline: snapshotRow ? (snapshotRow.dateLocal || snapshotRow.dateUTC || originalMeasurement?.dateLocal || originalMeasurement?.dateUTC || "N/V") : "N/V",
+      status: snapshotRow ? getWHOStatus(pollutant, snapshotRow.value, snapshotRow.unit) : null
+    };
+  };
   
   const timeSeries = data ? (() => {
     // Determine bucket type based on filter granularity
@@ -558,8 +639,63 @@ function App() {
     return buckets;
   })() : [];
 
-  const pollutants = snapshotSeries.map(s => s.pollutant);
-  console.log("Pollutants for chart:", pollutants);
+  const togglePollutant = pollutant => {
+    setSelectedPollutants(prev => (
+      prev.includes(pollutant)
+        ? prev.filter(p => p !== pollutant)
+        : [...prev, pollutant]
+    ));
+  };
+
+  const selectAllPollutants = () => {
+    setSelectedPollutants([...availablePollutants]);
+  };
+
+  const clearAllPollutants = () => {
+    setSelectedPollutants([]);
+  };
+
+  const getPollutantChartData = pollutant => {
+    const series = timeSeries
+      .filter(point => typeof point[pollutant] === "number")
+      .map(point => ({ time: point.time, value: point[pollutant] }));
+
+    if (series.length > 0) {
+      return series;
+    }
+
+    const latest = snapshotSeries.find(s => s.pollutant === pollutant);
+    return latest ? [{ time: "Latest", value: latest.value }] : [];
+  };
+
+  const chartCards = visiblePollutants
+    .map(pollutant => {
+      const seriesData = getPollutantChartData(pollutant);
+      if (!seriesData.length) {
+        return null;
+      }
+
+      return { pollutant, seriesData };
+    })
+    .filter(Boolean);
+
+  const pollutantChartColors = {
+    PM25: "#6366f1",
+    PM10: "#22c55e",
+    NO2: "#f97316",
+    SO2: "#94a3b8",
+    O3: "#f59e0b",
+    CO: "#64748b",
+    T: "#ef4444",
+    H: "#0ea5e9",
+    NO: "#8b5cf6",
+    P: "#14b8a6",
+    NH3: "#e11d48"
+  };
+
+  const tableTitle = data
+    ? `Historical Air Quality Measurements • Historical data from ${data.from || "-"} to ${data.to || "-"}`
+    : "Historical Air Quality Measurements";
 
   return (
     <div className="main-container">
@@ -763,139 +899,96 @@ function App() {
         </div>
       </div>
 
-      {/* Content Section - Chart and advice on top, full-width table below */}
+      {/* Content Section */}
       <div className="content-section">
-        <div className="top-content">
-          <div className="left-section">
-          <div className="chart-container">
-            <h2>Pollutant Levels {data ? `in ${data.city}` : ""}</h2>
+        <div className="chart-container">
+          <h2>Pollutant Levels {data ? `in ${data.city}` : ""}</h2>
 
-            {isLoading && (
-              <div className="chart-loading">
-                <div className="skeleton-loader">
-                  <div className="skeleton-bar"></div>
-                  <div className="skeleton-bar"></div>
-                  <div className="skeleton-bar"></div>
-                  <div className="skeleton-bar"></div>
-                  <div className="skeleton-bar"></div>
-                  <div className="skeleton-bar"></div>
-                </div>
-                <p className="loading-text">Fetching pollutant levels for {city}... Please wait.</p>
+          {data && (
+            <div className="pollutant-selector">
+              <div className="pollutant-selector-title">Select Pollutants to Display:</div>
+              <div className="pollutant-selector-actions">
+                <button type="button" onClick={selectAllPollutants} className="selector-btn">All</button>
+                <button type="button" onClick={clearAllPollutants} className="selector-btn selector-btn-danger">None</button>
               </div>
-            )}
-
-            {!data && !isLoading && <p style={{ color: "gray" }}>No data yet. Enter a city and click Show Data.</p>}
-
-            {data && !isLoading && chartMode === "snapshot" && (
-              <div style={{ width: "100%", height: 320 }} className="fade-in">
-                <ResponsiveContainer>
-                  <BarChart data={snapshotSeries}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="pollutant" />
-                    <YAxis />
-                    <Tooltip />
-                    <Legend />
-                    <Bar dataKey="value" fill="#4f8df6" />
-                  </BarChart>
-                </ResponsiveContainer>
+              <div className="pollutant-selector-grid">
+                {availablePollutants.map(pollutant => (
+                  <label key={pollutant} className={`pollutant-option ${selectedPollutants.includes(pollutant) ? "active" : ""}`}>
+                    <input
+                      type="checkbox"
+                      checked={selectedPollutants.includes(pollutant)}
+                      onChange={() => togglePollutant(pollutant)}
+                    />
+                    <span>{pollutant}</span>
+                  </label>
+                ))}
               </div>
-            )}
+            </div>
+          )}
 
-            {data && !isLoading && chartMode === "timeseries" && (
-              <div style={{ width: "100%", height: 320 }} className="fade-in">
-                <ResponsiveContainer>
-                  <LineChart data={timeSeries}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="time" />
-                    <YAxis />
-                    <Tooltip />
-                    <Legend />
-                    {pollutants.map((p, idx) => (
-                      <Line key={p} type="monotone" dataKey={p} stroke={["#4f8df6", "#82ca9d", "#ff7f50", "#8884d8", "#ffc658"][idx % 5]} />
-                    ))}
-                  </LineChart>
-                </ResponsiveContainer>
+          {isLoading && (
+            <div className="chart-loading">
+              <div className="skeleton-loader">
+                <div className="skeleton-bar"></div>
+                <div className="skeleton-bar"></div>
+                <div className="skeleton-bar"></div>
+                <div className="skeleton-bar"></div>
+                <div className="skeleton-bar"></div>
+                <div className="skeleton-bar"></div>
               </div>
-            )}
+              <p className="loading-text">Fetching pollutant levels for {city}... Please wait.</p>
+            </div>
+          )}
 
-            {data && (
-              <div style={{marginTop: "16px", padding: "12px", backgroundColor: "#f0f8ff", borderRadius: "5px"}}>
-                <strong>Location:</strong> {data.measurements?.[0]?.location || data.city || 'Unknown Location'}
-                <div style={{fontSize: "12px", color: "#666", marginTop: "6px"}}>
-                  {(() => {
-                    // Determine date range info
-                    const hasDateFilters = fromYear || toYear || fromMonth || toMonth || fromDay || toDay || fromHour || toHour;
-                    let dateInfo = "";
-                    
-                    if (hasDateFilters) {
-                      const fromParts = [];
-                      const toParts = [];
-                      if (fromYear) fromParts.push(fromYear);
-                      if (fromMonth) fromParts.push(String(fromMonth).padStart(2, '0'));
-                      if (fromDay) fromParts.push(String(fromDay).padStart(2, '0'));
-                      if (fromHour) fromParts.push(fromHour);
-                      
-                      if (toYear) toParts.push(toYear);
-                      if (toMonth) toParts.push(String(toMonth).padStart(2, '0'));
-                      if (toDay) toParts.push(String(toDay).padStart(2, '0'));
-                      if (toHour) toParts.push(toHour);
-                      
-                      const fromDate = fromParts.length > 0 ? fromParts.join('-') : '';
-                      const toDate = toParts.length > 0 ? toParts.join('-') : '';
-                      
-                      if (fromDate && toDate) {
-                        dateInfo = `Filtered data from ${fromDate} to ${toDate}`;
-                      } else if (fromDate) {
-                        dateInfo = `Filtered data from ${fromDate}`;
-                      } else if (toDate) {
-                        dateInfo = `Filtered data up to ${toDate}`;
-                      } else {
-                        dateInfo = "Filtered data range applied";
-                      }
-                    } else {
-                      // Check if data is current or historical
-                      const latestDate = data.measurements?.[0]?.dateLocal || data.measurements?.[0]?.dateUTC;
-                      if (latestDate) {
-                        const dataDate = new Date(latestDate);
-                        const now = new Date();
-                        const hoursDiff = (now - dataDate) / (1000 * 60 * 60);
-                        
-                        if (hoursDiff < 2) {
-                          dateInfo = "Current data (updated within 2 hours)";
-                        } else if (hoursDiff < 24) {
-                          dateInfo = `Recent data (${Math.round(hoursDiff)} hours old)`;
-                        } else {
-                          const daysDiff = Math.round(hoursDiff / 24);
-                          dateInfo = `Historical data (${daysDiff} day${daysDiff !== 1 ? 's' : ''} old)`;
-                        }
-                      } else {
-                        dateInfo = "Data timestamp unavailable";
-                      }
-                    }
-                    
-                    // Try to extract coordinates from location
-                    const locationStr = data.measurements?.[0]?.location || '';
-                    let coordsInfo = '';
-                    
-                    // Extract map coordinates from location string
-                    if (locationStr.includes(',')) {
-                      const parts = locationStr.split(',');
-                      if (parts.length >= 2) {
-                        const region = parts[parts.length-2]?.trim();
-                        const country = parts[parts.length-1]?.trim();
-                        if (region && country) {
-                          coordsInfo = ` • Map: ${region}, ${country}`;
-                        }
-                      }
-                    }
-                    
-                    return `${dateInfo}${coordsInfo}`;
-                  })()}
-                </div>
+          {!data && !isLoading && <p style={{ color: "gray" }}>No data yet. Enter a city and click Show Data.</p>}
+
+          {data && !isLoading && (
+            <div className="pollutant-card-scroll fade-in">
+              <div className="pollutant-card-row">
+                {chartCards.length > 0 ? chartCards.map(({ pollutant, seriesData }) => (
+                  <div className="pollutant-chart-card" key={pollutant}>
+                    <div className="pollutant-chart-title">{pollutant}</div>
+                    <div style={{ width: "100%", height: 220 }}>
+                      <ResponsiveContainer>
+                        <LineChart data={seriesData}>
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis
+                            dataKey="time"
+                            tick={{ fontSize: 11 }}
+                            interval="preserveStartEnd"
+                            label={{ value: "Timeline", position: "insideBottom", offset: -5, style: { fontSize: 11, fill: "#64748b" } }}
+                          />
+                          <YAxis
+                            tick={{ fontSize: 11 }}
+                            label={{ value: "Value", angle: -90, position: "insideLeft", style: { fontSize: 11, fill: "#64748b" } }}
+                          />
+                          <Tooltip />
+                          <Line
+                            type="monotone"
+                            dataKey="value"
+                            stroke={pollutantChartColors[pollutant] || "#4f8df6"}
+                            strokeWidth={2}
+                            dot={false}
+                          />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                )) : (
+                  <div className="chart-empty-state chart-empty-wide">No chart data available for the selected pollutants.</div>
+                )}
               </div>
-            )}
-          </div>
+            </div>
+          )}
 
+          {data && (
+            <div style={{ marginTop: "16px", padding: "12px", backgroundColor: "#f0f8ff", borderRadius: "5px" }}>
+              <strong>Location:</strong> {data.measurements?.[0]?.location || data.city || "Unknown Location"}
+              <div style={{ fontSize: "12px", color: "#666", marginTop: "6px" }}>
+                Historical data from {data.from || "-"} to {data.to || "-"}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="advice-container">
@@ -912,7 +1005,7 @@ function App() {
               </div>
             </div>
           )}
-          
+
           {advice && !isLoading && (
             <div className="advice fade-in">
               <h3 className="advice-header">
@@ -931,45 +1024,114 @@ function App() {
           )}
           {error && <p className="error">{error}</p>}
         </div>
-        </div>
 
         {/* Full-width Data Table Section */}
-        {data && (
-          <div className="table-section">
-            <h3>Air Quality Measurements</h3>
-            <table>
-              <thead>
-                <tr><th>Pollutant</th><th>Value</th><th>Unit</th><th>Last Updated</th><th>WHO Status</th></tr>
-              </thead>
-              <tbody>
-                {data.snapshot.map((row, i) => {
-                  const whoStatus = getWHOStatus(row.pollutant, row.value, row.unit);
-                  const actualUnit = getActualUnit(row.pollutant, row.unit);
-                  const originalMeasurement = data.measurements.find(m => m.pollutant.toUpperCase() === row.pollutant);
-                  const explanation = getPollutantExplanation(row.pollutant);
-                  return (
-                    <tr key={i}>
-                      <td className="pollutant-cell">
-                        <span className="pollutant-name">{row.pollutant}</span>
-                        <div className="pollutant-explanation">
-                          {explanation}
-                        </div>
-                      </td>
-                      <td>{row.value}</td>
-                      <td>{actualUnit}</td>
-                      <td>{originalMeasurement?.dateLocal || ""}</td>
-                      <td style={{color: whoStatus.color, fontWeight: "600"}}>
-                        <span style={{marginRight: "4px"}}>{whoStatus.emoji}</span>
-                        {whoStatus.status}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+        <div className="table-section">
+          <h3>{tableTitle}</h3>
+          <table>
+            <thead>
+              <tr><th>Pollutant</th><th>Value</th><th>Unit</th><th>{tableTimelineHeader}</th><th>WHO Status</th></tr>
+            </thead>
+            <tbody>
+              {data ? visiblePollutants.map((pollutant, i) => {
+                const tableRow = getTableRowForPollutant(pollutant);
+                return (
+                  <tr key={pollutant} className={hoveredPollutant?.pollutant === pollutant ? "pollutant-row active" : "pollutant-row"}>
+                    <td
+                      className="pollutant-cell"
+                      onMouseEnter={event => setHoveredPollutant({ pollutant, x: event.clientX, y: event.clientY })}
+                      onMouseMove={event => setHoveredPollutant({ pollutant, x: event.clientX, y: event.clientY })}
+                      onMouseLeave={() => setHoveredPollutant(null)}
+                    >
+                      <span className="pollutant-name">{pollutant}</span>
+                      <span className="pollutant-hover-hint">Hover for details</span>
+                    </td>
+                    <td>{tableRow.value}</td>
+                    <td>{tableRow.unit}</td>
+                    <td>{tableRow.timeline}</td>
+                    <td style={{ color: tableRow.status?.color || "#64748b", fontWeight: "600" }}>
+                      {tableRow.status ? <><span style={{ marginRight: "4px" }}>{tableRow.status.emoji}</span>{tableRow.status.status}</> : "N/V"}
+                    </td>
+                  </tr>
+                );
+              }) : (
+                <tr>
+                  <td colSpan="5" className="chart-empty-state">No historical measurements available for the selected filters.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+          {hoveredPollutant && (
+            <div
+              className="pollutant-hover-tooltip"
+              style={{ left: hoveredPollutant.x + 16, top: hoveredPollutant.y + 16 }}
+            >
+              <div className="pollutant-hover-tooltip-title">{hoveredPollutant.pollutant}</div>
+              <div className="pollutant-hover-tooltip-text">{getPollutantExplanation(hoveredPollutant.pollutant)}</div>
+            </div>
+          )}
+        </div>
       </div>
+
+      <button className="assistant-fab" onClick={() => setAssistantOpen(open => !open)} type="button">
+        <span className="assistant-fab-icon">🤖</span>
+        AI Assist
+      </button>
+
+      {assistantOpen && (
+        <div className="assistant-panel" role="dialog" aria-label="BreatheSmart AI Assistant">
+          <div className="assistant-panel-header">
+            <div>
+              <div className="assistant-panel-title">BreatheSmart AI Assistant</div>
+              <div className="assistant-panel-subtitle">Ask questions about air quality and the app</div>
+            </div>
+            <button className="assistant-close-btn" onClick={() => setAssistantOpen(false)} type="button" aria-label="Close assistant">
+              ×
+            </button>
+          </div>
+
+          <div className="assistant-context">
+            <div>OpenRouter assistant for general and app-related questions.</div>
+          </div>
+
+          <div className="assistant-messages">
+            {assistantMessages.map((message, index) => (
+              <div className={`assistant-message ${message.role}`} key={`${message.role}-${index}`}>
+                <div className="assistant-message-bubble">
+                  <div className="assistant-message-source">
+                    {message.source || (message.role === "user" ? "You" : "BreatheSmart Assistant")}
+                  </div>
+                  <div className="assistant-message-content">{message.content}</div>
+                </div>
+              </div>
+            ))}
+
+            {assistantLoading && (
+              <div className="assistant-message assistant">
+                <div className="assistant-message-bubble assistant-loading">Thinking...</div>
+              </div>
+            )}
+          </div>
+
+          <div className="assistant-input-row">
+            <input
+              value={assistantInput}
+              onChange={e => setAssistantInput(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  handleAssistantSend();
+                }
+              }}
+              placeholder="Ask a question about the app or air quality..."
+              disabled={assistantLoading}
+            />
+            <button type="button" onClick={handleAssistantSend} disabled={assistantLoading || !assistantInput.trim()}>
+              Send
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -12,7 +12,7 @@ const { normalizePollutant, coerceNumber } = require('./utils/normalize');
 
 const app = express();
 app.use(cors());
-app.use(express.json({ limit: "5mb" })); // Increased limit for large appContext payloads
+app.use(express.json());
 
 // Performance optimizations
 const NodeCache = require("node-cache");
@@ -261,60 +261,6 @@ app.get('/api/collection-status', async (req, res) => {
       status: 'Error',
       error: error.message,
       timestamp: new Date().toISOString()
-    });
-  }
-});
-
-/**
- * GET /api/locations - Get all available locations with optional filtering
- * Supports searching by country, city name, or listing all locations
- */
-app.get('/api/locations', async (req, res) => {
-  try {
-    const { country, search, limit = 100 } = req.query;
-    
-    const locations = await loadLocations();
-    let filtered = locations;
-    
-    if (country) {
-      filtered = filtered.filter(loc => 
-        loc.country?.name?.toLowerCase().includes(country.toLowerCase())
-      );
-    }
-    
-    if (search) {
-      const searchLower = search.toLowerCase();
-      filtered = filtered.filter(loc =>
-        loc.name?.toLowerCase().includes(searchLower) ||
-        loc.locality?.toLowerCase().includes(searchLower) ||
-        loc.country?.name?.toLowerCase().includes(searchLower)
-      );
-    }
-    
-    // Return summary with top results
-    const results = filtered.slice(0, parseInt(limit));
-    const countries = [...new Set(locations.map(l => l.country?.name).filter(Boolean))];
-    
-    res.json({
-      total: filtered.length,
-      returned: results.length,
-      limit: parseInt(limit),
-      countries_available: countries.length,
-      results: results.map(loc => ({
-        id: loc.id,
-        name: loc.name,
-        city: loc.locality,
-        country: loc.country?.name,
-        latitude: loc.coordinates?.latitude,
-        longitude: loc.coordinates?.longitude,
-        coverage: 'OpenAQ'
-      }))
-    });
-  } catch (error) {
-    console.error('Location listing error:', error);
-    res.status(500).json({ 
-      error: 'Failed to list locations',
-      details: error.message
     });
   }
 });
@@ -615,14 +561,14 @@ app.get("/api/valid-dates/:city", async (req, res) => {
     // Get specific dates that have data for this city
     const validDatesQuery = `
       SELECT DISTINCT 
-        DATE(timestamp) as date,
+        DATE(recorded_at) as date,
         COUNT(*) as record_count,
         array_agg(DISTINCT api_source) as sources,
-        MIN(timestamp) as earliest_time,
-        MAX(timestamp) as latest_time
+        MIN(recorded_at) as earliest_time,
+        MAX(recorded_at) as latest_time
       FROM air_quality_data 
       WHERE LOWER(city) LIKE LOWER($1)
-      GROUP BY DATE(timestamp) 
+      GROUP BY DATE(recorded_at) 
       ORDER BY date DESC
       LIMIT 30
     `;
@@ -700,30 +646,30 @@ app.get("/api/historical", async (req, res) => {
 
     if (date_from) {
       paramCount++;
-      query += ` AND DATE(timestamp) >= $${paramCount}`;
+      query += ` AND DATE(recorded_at) >= $${paramCount}`;
       values.push(date_from);
     }
 
     if (date_to) {
       paramCount++;
-      query += ` AND DATE(timestamp) <= $${paramCount}`;
+      query += ` AND DATE(recorded_at) <= $${paramCount}`;
       values.push(date_to);
     }
 
     if (hour_from !== undefined) {
       paramCount++;
-      query += ` AND hour_recorded >= $${paramCount}`;
+      query += ` AND recorded_hour >= $${paramCount}`;
       values.push(parseInt(hour_from));
     }
 
     if (hour_to !== undefined) {
       paramCount++;
-      query += ` AND hour_recorded <= $${paramCount}`;
+      query += ` AND recorded_hour <= $${paramCount}`;
       values.push(parseInt(hour_to));
     }
 
     // Add ordering and limit
-    query += ` ORDER BY timestamp DESC LIMIT $${paramCount + 1}`;
+    query += ` ORDER BY recorded_at DESC LIMIT $${paramCount + 1}`;
     values.push(parseInt(limit));
 
     // Execute query
@@ -751,17 +697,17 @@ app.get("/api/historical", async (req, res) => {
         wind_speed: row.wind_speed,
         wind_direction: row.wind_direction
       },
-      timestamp: row.timestamp,
-      hour: row.hour_recorded,
-      source: row.api_source
+      recorded_at: row.recorded_at,
+      hour: row.recorded_hour,
+      source: row.data_source || row.api_source
     }));
 
     // Generate summary statistics
     const summary = {
       total_records: result.rows.length,
       date_range: result.rows.length > 0 ? {
-        from: result.rows[result.rows.length - 1].timestamp,
-        to: result.rows[0].timestamp
+        from: result.rows[result.rows.length - 1].recorded_at,
+        to: result.rows[0].recorded_at
       } : null,
       cities: [...new Set(result.rows.map(r => r.city))],
       pollutants_available: []
@@ -780,8 +726,8 @@ app.get("/api/historical", async (req, res) => {
     // Add data availability context
     const availabilityQuery = `
       SELECT 
-        MIN(DATE(timestamp)) as earliest_available,
-        MAX(DATE(timestamp)) as latest_available,
+        MIN(DATE(recorded_at)) as earliest_available,
+        MAX(DATE(recorded_at)) as latest_available,
         COUNT(*) as total_city_records
       FROM air_quality_data 
       WHERE LOWER(city) LIKE LOWER($1)
@@ -802,7 +748,7 @@ app.get("/api/historical", async (req, res) => {
               parameter: parameter,
               value: parseFloat(value),
               unit: getUnitForPollutant(parameter),
-              dateUTC: record.timestamp,
+              dateUTC: record.recorded_at,
               location: `${record.city}, ${record.country || 'India'}`,
               city: record.city,
               coordinates: record.coordinates
@@ -1204,7 +1150,7 @@ app.post("/api/measurements", async (req, res) => {
     if (!cityName) return res.status(400).json({ error: "city is required" });
 
     // Create cache key for this request
-    const cacheKey = `measurements_${cityName}_${JSON.stringify(body)}`;
+    const cacheKey = `measurements_v2_${cityName}_${JSON.stringify(body)}`;
     
     // Check cache first
     const cachedResult = cache.get(cacheKey);
@@ -1293,7 +1239,17 @@ app.post("/api/measurements", async (req, res) => {
         end = new Date(Date.UTC(toYear, 11, 31, 23, 59, 59));
       }
     } else {
-      end = new Date();
+      const endYear = fromYear || new Date().getFullYear();
+      const endMonth = fromMonth ? (fromMonth - 1) : 11;
+      const endDay = fromDay || lastDayOfMonth(endYear, endMonth);
+      const endTime = parseTimeString(toHourStr || "23:59");
+
+      const historicalEnd = new Date(Date.UTC(endYear, endMonth, endDay, endTime.hours, endTime.minutes, 59));
+      if (!isNaN(historicalEnd.getTime())) {
+        end = historicalEnd;
+      } else {
+        end = new Date(Date.UTC(endYear, 11, 31, 23, 59, 59));
+      }
     }
 
     // Ensure start is before end
@@ -1339,7 +1295,7 @@ app.post("/api/measurements", async (req, res) => {
       }
     }
 
-    // Generate AI-powered advice using Groq
+    // Generate AI-powered advice using Groq API (uses GROQ_API_KEY as Bearer token)
     let localAdvice = "";
     try {
       if (process.env.GROQ_API_KEY && process.env.GROQ_API_KEY !== "demo" && allResults.length > 0) {
@@ -1348,27 +1304,28 @@ app.post("/api/measurements", async (req, res) => {
         const requestBody = {
           model: "llama-3.3-70b-versatile",
           messages: [{ role: "user", content: prompt }],
-          temperature: 0.2,
-          max_tokens: 180
+          max_tokens: 150,
+          temperature: 0.2
         };
 
-        const response = await axios.post("https://api.groq.com/openai/v1/chat/completions", requestBody, {
+        const groqUrl = "https://api.groq.com/openai/v1/chat/completions";
+        const response = await axios.post(groqUrl, requestBody, {
           headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${process.env.GROQ_API_KEY}`
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${process.env.GROQ_API_KEY}`
           },
           timeout: 8000
         });
 
-        const adviceText = response.data?.choices?.[0]?.message?.content;
-        if (adviceText) {
-          localAdvice = adviceText.trim();
-          console.log(`Groq AI advice generated for ${cityName}`);
+        const aiText = response.data?.choices?.[0]?.message?.content ?? response.data?.choices?.[0]?.text ?? response.data?.result?.content;
+        if (aiText) {
+          localAdvice = (aiText || "").trim();
+          console.log(`Ôªûõõ® Groq AI advice generated for ${cityName}`);
         } else {
-          throw new Error("No AI response");
+          throw new Error('No AI response');
         }
       } else {
-        throw new Error("Groq not available");
+        throw new Error('AI not available');
       }
     } catch (aiError) {
       // Fallback to rule-based advice
@@ -1413,6 +1370,7 @@ app.post("/api/insights", async (req, res) => {
     const body = req.body || {};
     const city = body.city || "";
     const data = body.data || [];
+    console.log(`\n≡ƒëş /api/insights called for ${city} with ${data.length} data points`);
     if (!data.length) return res.status(400).json({ error: "no data provided" });
 
     // Create cache key for this request
@@ -1425,184 +1383,181 @@ app.post("/api/insights", async (req, res) => {
       return res.json(cachedResult);
     }
     console.log(`Γ¥î Cache miss for insights: ${city}`);
+    console.log(`Checking API key: GROQ_API_KEY exists = ${!!process.env.GROQ_API_KEY}, not 'demo' = ${process.env.GROQ_API_KEY !== "demo"}`);
 
-    // Try Groq AI first
+    // Try Groq AI first, fallback to rule-based if it fails
     if (process.env.GROQ_API_KEY && process.env.GROQ_API_KEY !== "demo") {
-      console.log(`Attempting AI-powered insights for ${city} using Groq...`);
-
+      console.log(`Ôªûõõ® Attempting AI-powered insights for ${city} using Groq...`);
+      
       const prompt = `You are an air quality health expert. Provide a concise, practical health advisory (2-3 sentences) for ${city} based on this air quality data: ${JSON.stringify(data)}. Focus on actionable health recommendations for residents and visitors. Be specific about activities to avoid or precautions to take.`;
 
-      const requestBody = {
+      // Try OpenRouter chat completions (uses GEMINI_API_KEY as Bearer token)
+      const groqUrl = "https://api.groq.com/openai/v1/chat/completions";
+      const groqRequest = {
         model: "llama-3.3-70b-versatile",
         messages: [{ role: "user", content: prompt }],
-        temperature: 0.2,
-        max_tokens: 220
+        max_tokens: 300,
+        temperature: 0.2
       };
 
       try {
-        const response = await axios.post("https://api.groq.com/openai/v1/chat/completions", requestBody, {
+        const response = await axios.post(groqUrl, groqRequest, {
           headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${process.env.GROQ_API_KEY}`
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${process.env.GROQ_API_KEY}`
           },
-          timeout: 8000
+          timeout: 15000
         });
 
-        const aiInsight = response.data?.choices?.[0]?.message?.content;
+        const aiInsight = response.data?.choices?.[0]?.message?.content ?? response.data?.choices?.[0]?.text ?? response.data?.result?.content;
         if (aiInsight) {
+          console.log('≡ƒÄë Groq AI insights generated successfully!');
           const responseData = {
             insights: aiInsight.trim(),
-            source: "Groq AI",
-            city,
-            model: response.data?.model || "llama-3.3-70b-versatile"
+            source: 'Groq AI',
+            city: city,
+            model: response.data?.model || 'llama-3.3-70b-versatile'
           };
-
           cache.set(cacheKey, responseData);
-          console.log(`Cached Groq insights for ${city}`);
+          console.log(`≡ƒÆ╛ Cached AI insights for ${city}`);
           return res.json(responseData);
+        } else {
+          console.log('❌ OpenRouter response missing content field');
+          console.log('Response structure:', JSON.stringify(response.data, null, 2).substring(0, 500));
         }
-      } catch (groqError) {
-        console.log(`Groq failed: ${groqError.code || groqError.response?.status || "timeout"}`);
+      } catch (endpointError) {
+        console.error('\n❌ OpenRouter API Error:');
+        console.error('  - Status:', endpointError.response?.status);
+        console.error('  - Status Text:', endpointError.response?.statusText);
+        console.error('  - Message:', endpointError.message);
+        console.error('  - Error Code:', endpointError.code);
+        if (endpointError.response?.data) {
+          console.error('  - Response Data:', JSON.stringify(endpointError.response.data, null, 2).substring(0, 1000));
+        }
+        if (endpointError.config) {
+          console.error('  - Request URL:', endpointError.config.url);
+          console.error('  - Request Method:', endpointError.config.method);
+        }
       }
+
+      console.log('Γ¥î OpenRouter failed, falling back to professional rule-based system');
     }
 
-    // Fallback to professional rule-based system
-    console.log(`Falling back to professional rule-based advice for ${city}...`);
+    // Enhanced Professional Rule-Based Health Advisory System
+    console.log(`Generating professional-grade health advisory for ${city}...`);
+    
+    // Analyze all pollutants
     const pm25 = data.filter(r => r.pollutant === "pm25" || r.pollutant === "pm2.5").map(r => r.value);
     const pm10 = data.filter(r => r.pollutant === "pm10").map(r => r.value);
     const no2 = data.filter(r => r.pollutant === "no2").map(r => r.value);
+    const o3 = data.filter(r => r.pollutant === "o3" || r.pollutant === "ozone").map(r => r.value);
+    const so2 = data.filter(r => r.pollutant === "so2").map(r => r.value);
+    const co = data.filter(r => r.pollutant === "co").map(r => r.value);
+    
+    // Calculate averages
     const avgPm25 = pm25.length ? pm25.reduce((a,b)=>a+b,0)/pm25.length : null;
     const avgPm10 = pm10.length ? pm10.reduce((a,b)=>a+b,0)/pm10.length : null;
     const avgNo2 = no2.length ? no2.reduce((a,b)=>a+b,0)/no2.length : null;
+    const avgO3 = o3.length ? o3.reduce((a,b)=>a+b,0)/o3.length : null;
+    const avgSo2 = so2.length ? so2.reduce((a,b)=>a+b,0)/so2.length : null;
+    const avgCo = co.length ? co.reduce((a,b)=>a+b,0)/co.length : null;
     
+    // Health risk assessment
     let overallRisk = "low";
     let specificRisks = [];
     let recommendations = [];
+    let vulnerableGroups = [];
     
-    if (avgPm25 !== null && avgPm25 >= 150) {
-      overallRisk = "very high";
-      specificRisks.push("PM2.5 hazardous");
-      recommendations.push("avoid outdoor exercise", "wear N95 masks");
-    } else if (avgPm25 !== null && avgPm25 >= 55) {
-      overallRisk = "high";
-      specificRisks.push("PM2.5 unhealthy for sensitive groups");
-      recommendations.push("sensitive individuals limit outdoor activities");
+    // PM2.5 Assessment (WHO guidelines: Good <15, Moderate 15-35, Poor 35-55, Very Poor >55)
+    if (avgPm25 !== null) {
+      if (avgPm25 >= 250) {
+        overallRisk = "extreme"; 
+        specificRisks.push("PM2.5 at emergency levels");
+        recommendations.push("avoid all outdoor activities", "seal windows and doors", "use air purifiers on high");
+        vulnerableGroups.push("everyone");
+      } else if (avgPm25 >= 150) {
+        overallRisk = "very high"; 
+        specificRisks.push("PM2.5 at hazardous levels");
+        recommendations.push("avoid outdoor exercise", "wear N95/FFP2 masks outdoors", "limit time outside");
+        vulnerableGroups.push("children", "elderly", "people with heart/lung conditions");
+      } else if (avgPm25 >= 55) {
+        overallRisk = overallRisk === "low" ? "high" : overallRisk;
+        specificRisks.push("PM2.5 unhealthy for sensitive groups");
+        recommendations.push("sensitive individuals should limit outdoor activities", "consider masks for extended outdoor time");
+        vulnerableGroups.push("children", "elderly", "asthmatics");
+      } else if (avgPm25 >= 35) {
+        overallRisk = overallRisk === "low" ? "moderate" : overallRisk;
+        specificRisks.push("PM2.5 moderately elevated");
+        recommendations.push("monitor air quality updates", "consider reducing strenuous outdoor activities");
+        vulnerableGroups.push("very sensitive individuals");
+      }
     }
     
+    // PM10 Assessment
     if (avgPm10 !== null && avgPm10 >= 150) {
       overallRisk = overallRisk === "low" ? "high" : overallRisk;
-      specificRisks.push("PM10 unhealthy");
+      specificRisks.push("PM10 at unhealthy levels");
+      if (!recommendations.includes("consider masks for extended outdoor time")) {
+        recommendations.push("consider masks for dusty conditions");
+      }
     }
     
+    // NO2 Assessment (WHO: Good <25, Moderate 25-50, Poor 50-100, Very Poor >100)
     if (avgNo2 !== null && avgNo2 >= 100) {
       overallRisk = overallRisk === "low" ? "high" : overallRisk;
-      recommendations.push("avoid busy roads");
+      specificRisks.push("NO2 at concerning levels");
+      recommendations.push("avoid busy roads and traffic", "limit outdoor exercise near vehicles");
+      vulnerableGroups.push("people with respiratory conditions");
     }
     
-    let insight = "Air quality in " + city + " is ";
-    if (overallRisk === "very high") {
-      insight += "hazardous. Avoid outdoor activities, wear N95 masks outdoors, and limit time outside.";
+    // O3 Assessment
+    if (avgO3 !== null && avgO3 >= 120) {
+      overallRisk = overallRisk === "low" ? "moderate" : overallRisk;
+      specificRisks.push("Ozone levels elevated");
+      recommendations.push("avoid outdoor exercise during peak sun hours", "stay indoors during hottest part of day");
+      vulnerableGroups.push("children", "outdoor workers");
+    }
+    
+    // Generate contextual advice
+    let insight = "";
+    
+    if (overallRisk === "extreme") {
+      insight = `≡ƒÜ¿ HEALTH EMERGENCY: Air quality in ${city} is extremely hazardous (${specificRisks.join(", ")}). ${recommendations.join(", ")}. Seek medical attention if experiencing breathing difficulties.`;
+    } else if (overallRisk === "very high") {
+      insight = `ΓÜá∩╕Å VERY UNHEALTHY: Air quality in ${city} poses serious health risks (${specificRisks.join(", ")}). Essential advice: ${recommendations.slice(0, 3).join(", ")}. Especially important for ${[...new Set(vulnerableGroups)].join(", ")}.`;
     } else if (overallRisk === "high") {
-      insight += "concerning. Sensitive individuals should limit outdoor activities. Consider masks for extended outdoor time.";
+      insight = `ΓÜá∩╕Å UNHEALTHY: Air quality in ${city} is concerning (${specificRisks.join(", ")}). Recommended actions: ${recommendations.slice(0, 2).join(", ")}. ${[...new Set(vulnerableGroups)].join(", ")} should take extra precautions.`;
     } else if (overallRisk === "moderate") {
-      insight += "moderate. Monitor conditions and consider limiting strenuous outdoor activities.";
+      insight = `ΓÜí MODERATE: Air quality in ${city} requires attention (${specificRisks.join(", ")}). Consider ${recommendations[0] || "monitoring conditions closely"}. ${vulnerableGroups.length ? [...new Set(vulnerableGroups)].join(", ") + " should be cautious" : "Generally acceptable for most people"}.`;
     } else {
-      insight += "acceptable. Safe for outdoor activities.";
+      const pollutantCount = data.length;
+      const uniquePollutants = [...new Set(data.map(r => r.pollutant))];
+      insight = `Γ£à GOOD: Air quality in ${city} appears healthy based on ${pollutantCount} measurements covering ${uniquePollutants.join(", ")}. Safe for all outdoor activities including exercise and recreation.`;
     }
     
-    const responseData = {
+    const responseData = { 
       insights: insight,
-      source: "Professional Health Advisory System",
-      city
+      source: 'Professional Health Advisory System',
+      city: city,
+      riskLevel: overallRisk,
+      analysis: {
+        pollutantsAnalyzed: data.length,
+        specificRisks: specificRisks,
+        recommendations: recommendations,
+        vulnerableGroups: [...new Set(vulnerableGroups)]
+      },
+      note: 'AI-grade health analysis using WHO and EPA guidelines - Professional medical-level advisory system'
     };
 
+    // Cache the response for future requests
     cache.set(cacheKey, responseData);
-    console.log(`Cached rule-based insights for ${city}`);
+    console.log(`≡ƒÆ╛ Cached rule-based insights for ${city}`);
+
     res.json(responseData);
+
   } catch (err) {
     console.error('Insights generation failed:', err.message);
     res.status(500).json({ error: "Failed to generate insights", details: err.message });
-  }
-});
-
-app.post("/api/assistant", async (req, res) => {
-  try {
-    const body = req.body || {};
-    const question = (body.question || "").trim();
-    const appContext = body.appContext || {};
-
-    if (!question) {
-      return res.status(400).json({ error: "question is required" });
-    }
-
-    const cacheKey = `assistant_${question}_${JSON.stringify(appContext).slice(0, 1200)}`;
-    const cached = cache.get(cacheKey);
-    if (cached) {
-      return res.json(cached);
-    }
-
-    const contextText = [
-      `City: ${appContext.city || "N/A"}`,
-      `Has data: ${appContext.hasData ? "yes" : "no"}`,
-      `Chart mode: ${appContext.chartMode || "N/A"}`,
-      `Selected pollutants: ${(appContext.selectedPollutants || []).join(", ") || "N/A"}`,
-      `Record count: ${appContext.recordCount || 0}`
-    ].join("\n");
-
-    if (process.env.OPENROUTER_API_KEY || process.env.GEMINI_API_KEY) {
-      const apiKey = process.env.OPENROUTER_API_KEY || process.env.GEMINI_API_KEY;
-      const requestBody = {
-        model: "gpt-4o-mini",
-        messages: [
-          {
-            role: "system",
-            content: "You are BreatheSmart assistant. Answer both general air-quality questions and app-related questions. Keep responses practical and concise."
-          },
-          {
-            role: "user",
-            content: `App context:\n${contextText}\n\nUser question: ${question}`
-          }
-        ],
-        temperature: 0.2,
-        max_tokens: 300
-      };
-
-      try {
-        const response = await axios.post("https://openrouter.ai/api/v1/chat/completions", requestBody, {
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${apiKey}`
-          },
-          timeout: 12000
-        });
-
-        const answer = response.data?.choices?.[0]?.message?.content?.trim();
-        if (answer) {
-          const payload = {
-            answer,
-            source: "OpenRouter"
-          };
-          cache.set(cacheKey, payload);
-          return res.json(payload);
-        }
-      } catch (err) {
-        console.log(`OpenRouter assistant fallback: ${err.message}`);
-      }
-    }
-
-    const fallbackAnswer = appContext.hasData
-      ? `Based on the current data for ${appContext.city || "this city"}, focus on PM2.5/PM10 trends, avoid heavy outdoor activity when levels rise, and use filters to compare timeline windows before deciding exposure.`
-      : "I can answer both general and app-related questions. First load a city with Show Data for context-aware recommendations.";
-
-    const payload = {
-      answer: fallbackAnswer,
-      source: "Rule-based assistant"
-    };
-    cache.set(cacheKey, payload);
-    return res.json(payload);
-  } catch (err) {
-    console.error("Assistant error:", err.message);
-    res.status(500).json({ error: "Failed to generate assistant response" });
   }
 });
 
@@ -1872,7 +1827,7 @@ app.post("/api/hybrid-measurements", async (req, res) => {
       if (dbResult.rows.length > 0) {
         console.log(`≡ƒÄÿ Found ${dbResult.rows.length} database records for ${cityName}`);
         
-        // Convert database records to API format
+        // Convert database records to API format (extract all 8 available pollutants)
         const dbResults = [];
         dbResult.rows.forEach(row => {
           if (row.pm25 !== null) dbResults.push({
@@ -1903,6 +1858,16 @@ app.post("/api/hybrid-measurements", async (req, res) => {
           if (row.o3 !== null) dbResults.push({
             pollutant: 'o3', parameter: 'o3', value: parseFloat(row.o3), 
             unit: 'µg/m³', dateUTC: row.recorded_at, location: `${row.city}, ${row.country || 'India'}`,
+            city: row.city, coordinates: row.latitude && row.longitude ? [row.latitude, row.longitude] : null
+          });
+          if (row.temperature !== null) dbResults.push({
+            pollutant: 't', parameter: 't', value: parseFloat(row.temperature), 
+            unit: '°C', dateUTC: row.recorded_at, location: `${row.city}, ${row.country || 'India'}`,
+            city: row.city, coordinates: row.latitude && row.longitude ? [row.latitude, row.longitude] : null
+          });
+          if (row.humidity !== null) dbResults.push({
+            pollutant: 'h', parameter: 'h', value: parseFloat(row.humidity), 
+            unit: '%', dateUTC: row.recorded_at, location: `${row.city}, ${row.country || 'India'}`,
             city: row.city, coordinates: row.latitude && row.longitude ? [row.latitude, row.longitude] : null
           });
         });
@@ -2028,34 +1993,39 @@ app.post("/api/hybrid-measurements", async (req, res) => {
     
     try {
       if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "demo" && results.length > 0) {
-        console.log(`≡ƒñû Generating Gemini AI health advice for ${cityName}...`);
+        console.log(`≡ƒñû Generating OpenRouter AI health advice for ${cityName}...`);
         
         const prompt = `You are an air quality health expert. Provide a practical health advisory (2-3 sentences) for ${cityName} based on this air quality data from ${successfulSource}: ${JSON.stringify(results.slice(0, 15))}. Focus on actionable recommendations for residents.`;
-        
-        const requestBody = {
-          contents: [{
-            parts: [{ text: prompt }]
-          }]
+
+        const orRequest = {
+          model: "gpt-4o-mini",
+          messages: [{ role: "user", content: prompt }],
+          max_tokens: 150,
+          temperature: 0.2
         };
 
-        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${process.env.GEMINI_API_KEY}`;
-        const response = await axios.post(geminiUrl, requestBody, {
-          headers: { 'Content-Type': 'application/json' },
+        const openrouterUrl = "https://api.openrouter.ai/v1/chat/completions";
+        const response = await axios.post(openrouterUrl, orRequest, {
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${process.env.GEMINI_API_KEY}`
+          },
           timeout: 10000
         });
 
-        if (response.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
-          localAdvice = response.data.candidates[0].content.parts[0].text.trim();
-          adviceSource = "Gemini AI";
-          console.log('≡ƒÄë Gemini AI health advice generated successfully!');
+        const aiText = response.data?.choices?.[0]?.message?.content ?? response.data?.choices?.[0]?.text ?? response.data?.result?.content;
+        if (aiText) {
+          localAdvice = (aiText || "").trim();
+          adviceSource = "OpenRouter AI";
+          console.log('≡ƒÄë OpenRouter AI health advice generated successfully!');
         } else {
           throw new Error('No AI response received');
         }
       } else {
-        throw new Error('Gemini AI not available');
+        throw new Error('AI not available');
       }
     } catch (aiError) {
-      console.log('≡ƒöä Gemini failed, using enhanced rule-based advice...');
+      console.log('≡ƒöä OpenRouter failed, using enhanced rule-based advice...');
       
       // Enhanced rule-based advice with multiple pollutants
       const pm25 = results.filter(r => r.pollutant === "pm25" || r.pollutant === "pm2.5").map(r => r.value);
@@ -2141,8 +2111,8 @@ app.post("/api/hybrid-measurements", async (req, res) => {
   }
 });
 
-// Test Gemini API key endpoint
-app.get("/api/test-gemini", async (req, res) => {
+// Test OpenRouter API key endpoint
+app.get("/api/test-openrouter", async (req, res) => {
   try {
     if (!process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY === "demo") {
       return res.json({ 
@@ -2151,52 +2121,113 @@ app.get("/api/test-gemini", async (req, res) => {
       });
     }
 
-    const testRequest = {
-      contents: [{
-        parts: [{
-          text: "Say 'Hello from Gemini!' in exactly those words."
-        }]
-      }]
+    const orRequest = {
+      model: "gpt-4o-mini",
+      messages: [{ role: "user", content: "Say 'Hello from OpenRouter!' in exactly those words." }],
+      max_tokens: 40
     };
 
-    const endpoints = [
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${process.env.GEMINI_API_KEY}`,
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent?key=${process.env.GEMINI_API_KEY}`
-    ];
+    const openrouterUrl = "https://api.openrouter.ai/v1/chat/completions";
+    try {
+      const response = await axios.post(openrouterUrl, orRequest, {
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${process.env.GEMINI_API_KEY}`
+        },
+        timeout: 10000
+      });
 
-    for (const endpoint of endpoints) {
+      const text = response.data?.choices?.[0]?.message?.content ?? response.data?.choices?.[0]?.text ?? response.data?.result?.content;
+      if (text) {
+        return res.json({ status: 'Success', endpoint: openrouterUrl, response: text, model: response.data?.model || 'gpt-4o-mini' });
+      }
+    } catch (err) {
+      console.log(`OpenRouter test failed: ${err.response?.status || ''} - ${err.message}`);
+    }
+
+    res.json({ status: 'Failed', message: 'OpenRouter test failed; check API key and network connectivity' });
+
+  } catch (err) {
+    res.status(500).json({ status: 'Error', message: err.message });
+  }
+});
+
+app.post("/api/assistant", async (req, res) => {
+  try {
+    const body = req.body || {};
+    const question = (body.question || "").trim();
+    const appContext = body.appContext || {};
+
+    if (!question) {
+      return res.status(400).json({ error: "question is required" });
+    }
+
+    // Allow caller to request a provider and model (e.g. provider: 'openrouter', model: 'gpt-4o-mini')
+    const requestedProvider = (body.provider || '').toLowerCase();
+    const requestedModel = body.model || '';
+
+    const cacheKey = `assistant_${requestedProvider || 'auto'}_${requestedModel || 'default'}_${question}_${JSON.stringify(appContext).slice(0, 200)}`;
+    const cachedResult = cache.get(cacheKey);
+    if (cachedResult) {
+      return res.json(cachedResult);
+    }
+
+    const systemPrompt = `You are BreatheSmart Assistant, a helpful generative AI assistant. Answer general questions naturally and clearly. If the user asks about this app, explain filters, charts, table values, pollutants, and how historical vs current data views work. Use app context only when relevant; do not force responses around mode or city unless the user asks. If the topic is medical or emergency related, recommend consulting a qualified professional or local emergency services.`;
+
+    const contextualPrompt = `Optional app context (use only if helpful): ${JSON.stringify(appContext)}\n\nUser question: ${question}`;
+
+    // Determine provider to use. Prefer explicit request, otherwise auto-select
+    const openrouterKey = process.env.OPENROUTER_API_KEY || process.env.GEMINI_API_KEY || null;
+    const useOpenRouter = requestedProvider === 'openrouter' || (!requestedProvider && !!openrouterKey);
+
+    if (useOpenRouter && openrouterKey) {
+      const openrouterUrl = 'https://api.openrouter.ai/v1/chat/completions';
+      const modelToUse = requestedModel || 'gpt-4o-mini';
+      const requestBody = {
+        model: modelToUse,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: contextualPrompt }
+        ],
+        max_tokens: 400,
+        temperature: 0.3
+      };
+
       try {
-        console.log(`Testing endpoint: ${endpoint.split('?')[0]}`);
-        const response = await axios.post(endpoint, testRequest, {
-          headers: { 'Content-Type': 'application/json' },
-          timeout: 10000
+        const response = await axios.post(openrouterUrl, requestBody, {
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${openrouterKey}`
+          },
+          timeout: 20000
         });
 
-        if (response.data?.candidates?.[0]?.content?.parts?.[0]?.text) {
-          return res.json({
-            status: 'Success',
-            endpoint: endpoint.split('?')[0],
-            response: response.data.candidates[0].content.parts[0].text,
-            model: endpoint.includes('flash') ? 'Gemini 1.5 Flash' : 'Gemini Pro'
-          });
+        const answer = response.data?.choices?.[0]?.message?.content ?? response.data?.choices?.[0]?.text ?? response.data?.result?.content;
+        if (answer) {
+          const responseData = {
+            answer: answer.trim(),
+            source: 'OpenRouter AI',
+            model: response.data?.model || modelToUse
+          };
+          cache.set(cacheKey, responseData);
+          return res.json(responseData);
         }
       } catch (err) {
-        console.log(`Endpoint failed: ${err.response?.status} - ${err.message}`);
-        continue;
+        console.error('Assistant OpenRouter request failed:', err.message, err.response?.data || '');
       }
     }
 
-    res.json({
-      status: 'All endpoints failed',
-      message: 'No working Gemini endpoints found',
-      suggestion: 'Check if API key is valid and has proper permissions'
-    });
+    const fallback = `I can help with general questions and app-related queries. For app usage, you can ask about filters, pollutant charts, historical vs current table behavior, and interpreting values.`;
 
+    const responseData = {
+      answer: `${fallback} You asked: ${question}`,
+      source: "Rule-based assistant"
+    };
+    cache.set(cacheKey, responseData);
+    return res.json(responseData);
   } catch (err) {
-    res.status(500).json({ 
-      status: 'Error', 
-      message: err.message 
-    });
+    console.error("Assistant endpoint failed:", err.message);
+    res.status(500).json({ error: "Failed to generate assistant response", details: err.message });
   }
 });
 
