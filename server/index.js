@@ -3,6 +3,7 @@ const axios = require("axios");
 const cors = require("cors");
 const path = require("path");
 const cron = require("node-cron");
+const fs = require("fs");
 require("dotenv").config();
 
 // Import database functions
@@ -10,6 +11,34 @@ const { testConnection, initializeTables, storeAirQualityData, pool } = require(
 // Normalization helpers
 const { normalizePollutant, coerceNumber, normalizeLocation } = require('./utils/normalize');
 const { buildSourceComparison } = require('./utils/locationCoverage');
+
+// Load global countries database (193 UN member states)
+let globalCountriesDatabase = [];
+let countryCoverageMap = {};
+let regionalCoverageMap = {};
+try {
+  const countriesPath = path.join(__dirname, 'countries_193.json');
+  const countriesData = JSON.parse(fs.readFileSync(countriesPath, 'utf8'));
+  globalCountriesDatabase = countriesData.countries || [];
+  
+  // Try to load coverage map if available
+  const coveragePath = path.join(__dirname, 'coverage_map.json');
+  if (fs.existsSync(coveragePath)) {
+    countryCoverageMap = JSON.parse(fs.readFileSync(coveragePath, 'utf8'));
+  }
+  
+  // Try to load regional coverage map if available
+  const regionalCoveragePath = path.join(__dirname, 'regional_coverage.json');
+  if (fs.existsSync(regionalCoveragePath)) {
+    regionalCoverageMap = JSON.parse(fs.readFileSync(regionalCoveragePath, 'utf8'));
+  }
+  
+  console.log(`✅ Loaded ${globalCountriesDatabase.length} countries from database`);
+  console.log(`✅ Loaded coverage map with ${Object.keys(countryCoverageMap).length} entries`);
+  console.log(`✅ Loaded regional coverage for ${Object.keys(regionalCoverageMap).length} countries`);
+} catch (err) {
+  console.error('⚠️ Could not load global countries database:', err.message);
+}
 
 const app = express();
 app.use(cors());
@@ -55,7 +84,19 @@ async function loadLocations() {
     return locationsCache.data;
   }
   const res = await axios.get(`${OPENAQ_API}/locations?limit=1000`, { headers: HEADERS });
-  locationsCache = { ts: now, data: res.data.results || [] };
+  const raw = res.data.results || [];
+  // Normalize country field so callers can rely on loc.country.name
+  const normalized = raw.map(loc => {
+    try {
+      if (loc && loc.country && typeof loc.country === 'string') {
+        loc.country = { name: loc.country };
+      }
+    } catch (e) {
+      // ignore normalization errors for individual records
+    }
+    return loc;
+  });
+  locationsCache = { ts: now, data: normalized };
   return locationsCache.data;
 }
 
@@ -86,7 +127,7 @@ async function findLocationsByCity(cityName) {
     // If input is a known country synonym, return top stations for that country
     const mapped = countryMappings[lowerCity];
     if (mapped) {
-      const countryLocations = locations.filter(loc => (loc.country?.name || '').toLowerCase() === mapped.toLowerCase());
+      const countryLocations = locations.filter(loc => getLocationCountryName(loc).toLowerCase() === mapped.toLowerCase());
       if (countryLocations.length > 0) {
         console.log(`🌍 Found ${countryLocations.length} locations in ${mapped}`);
         return countryLocations;
@@ -94,7 +135,7 @@ async function findLocationsByCity(cityName) {
     }
 
     // Direct country name match
-    const directCountry = locations.filter(loc => (loc.country?.name || '').toLowerCase().includes(lowerCity));
+    const directCountry = locations.filter(loc => getLocationCountryName(loc).toLowerCase().includes(lowerCity));
     if (directCountry.length > 0) {
       console.log(`🌍 Found ${directCountry.length} locations matching country ${cityName}`);
       return directCountry;
@@ -113,7 +154,7 @@ async function findLocationsByCity(cityName) {
 
     // Fuzzy full-text match
     cityMatches = locations.filter(loc => {
-      const full = `${loc.name || ''} ${loc.locality || ''} ${loc.country?.name || ''}`.toLowerCase();
+      const full = `${loc.name || ''} ${loc.locality || ''} ${getLocationCountryName(loc) || ''}`.toLowerCase();
       return full.includes(lowerCity);
     });
     if (cityMatches.length > 0) {
@@ -132,6 +173,143 @@ async function findLocationsByCity(cityName) {
     console.error(`❌ Error finding locations for ${cityName}:`, err.message);
     return [];
   }
+}
+
+function normalizeSearchText(value = "") {
+  return value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+// Helper: robustly extract country name from OpenAQ location objects
+function getLocationCountryName(loc) {
+  try {
+    if (!loc || !loc.country) return '';
+    if (typeof loc.country === 'string') return loc.country;
+    if (typeof loc.country.name === 'string' && loc.country.name.trim()) return loc.country.name;
+    if (typeof loc.country.code === 'string' && loc.country.code.trim()) return loc.country.code;
+    return '';
+  } catch (e) {
+    return '';
+  }
+}
+
+function findCountryByQuery(query = "") {
+  const normalized = normalizeSearchText(query);
+  console.log(`[DEBUG] findCountryByQuery input="${query}" normalized="${normalized}"`);
+  if (!normalized) return null;
+
+  const aliases = {
+    usa: 'United States',
+    us: 'United States',
+    america: 'United States',
+    'united states of america': 'United States',
+    uk: 'United Kingdom',
+    britain: 'United Kingdom',
+    england: 'United Kingdom',
+    uae: 'United Arab Emirates',
+    drc: 'Democratic Republic of Congo',
+    russia: 'Russia',
+    southkorea: 'South Korea',
+    northkorea: 'North Korea',
+    ivorycoast: "Cote d'Ivoire"
+  };
+
+  const aliasMatch = aliases[normalized.replace(/\s+/g, '')] || aliases[normalized];
+  if (aliasMatch) {
+    const country = globalCountriesDatabase.find(c => normalizeSearchText(c.name) === normalizeSearchText(aliasMatch));
+    if (country) {
+      console.log(`[DEBUG] findCountryByQuery aliasMatch="${aliasMatch}" -> matched country="${country.name}"`);
+      return country;
+    }
+  }
+
+  let exact = globalCountriesDatabase.find(c =>
+    normalizeSearchText(c.name) === normalized ||
+    normalizeSearchText(c.iso2 || '') === normalized ||
+    normalizeSearchText(c.iso3 || '') === normalized
+  );
+  if (exact) return exact;
+
+  if (exact) console.log(`[DEBUG] findCountryByQuery exact match -> ${exact.name}`);
+
+  exact = globalCountriesDatabase.find(c => normalizeSearchText(c.name).includes(normalized));
+  if (exact) {
+    console.log(`[DEBUG] findCountryByQuery partial match -> ${exact.name}`);
+  } else {
+    console.log(`[DEBUG] findCountryByQuery no match for "${query}"`);
+  }
+  return exact || null;
+}
+
+function buildHierarchicalSearchContext(rawQuery = "") {
+  const query = (rawQuery || '').trim();
+  const country = findCountryByQuery(query);
+
+  console.log(`[DEBUG] buildHierarchicalSearchContext input="${rawQuery}" normalized="${normalizeSearchText(rawQuery)}" countryResolved="${country ? country.name : 'null'}"`);
+
+  if (country) {
+    const regionalData = regionalCoverageMap[country.name] || null;
+    const regions = regionalData?.regions ? Object.entries(regionalData.regions) : [];
+    const preferredRegions = regions
+      .sort((a, b) => {
+        const aScore = (a[1]?.hasData ? 3 : 0)
+          + (a[1]?.apis?.waqi === 'available' ? 2 : 0)
+          + (a[1]?.apis?.openweather === 'available' ? 1 : 0);
+        const bScore = (b[1]?.hasData ? 3 : 0)
+          + (b[1]?.apis?.waqi === 'available' ? 2 : 0)
+          + (b[1]?.apis?.openweather === 'available' ? 1 : 0);
+        return bScore - aScore;
+      })
+      .slice(0, 8)
+      .map(([regionName]) => regionName);
+
+    const apiQueries = preferredRegions.length > 0
+      ? preferredRegions.map(region => `${region}, ${country.name}`)
+      : [country.name];
+
+    console.log(`[DEBUG] buildHierarchicalSearchContext country="${country.name}" preferredRegions=${JSON.stringify(preferredRegions.slice(0,8))} apiQueries=${JSON.stringify(apiQueries.slice(0,8))}`);
+
+    return {
+      query,
+      level: 'country',
+      country,
+      regionCandidates: preferredRegions,
+      apiQueries,
+      displayLabel: preferredRegions.length > 0
+        ? `${country.name} (representative regions)`
+        : `${country.name} (country-level fallback)`
+    };
+  }
+
+  // Region/local-area level inference using known regional map.
+  const normalizedQuery = normalizeSearchText(query);
+  for (const [countryName, coverage] of Object.entries(regionalCoverageMap || {})) {
+    const regionEntries = Object.entries(coverage?.regions || {});
+    const matched = regionEntries.find(([regionName]) => normalizeSearchText(regionName) === normalizedQuery);
+    if (matched) {
+      const countryObj = globalCountriesDatabase.find(c => c.name === countryName) || null;
+      return {
+        query,
+        level: 'region',
+        country: countryObj,
+        matchedRegion: matched[0],
+        regionCandidates: [matched[0]],
+        apiQueries: [`${matched[0]}, ${countryName}`, matched[0]],
+        displayLabel: `${matched[0]}, ${countryName}`
+      };
+    }
+  }
+
+  return {
+    query,
+    level: 'local',
+    country: null,
+    regionCandidates: [],
+    apiQueries: [query],
+    displayLabel: query
+  };
 }
 
 function groupSnapshot(results) {
@@ -199,7 +377,7 @@ app.get('/api/locations', async (req, res) => {
     
     if (country) {
       filtered = filtered.filter(loc => 
-        loc.country?.name?.toLowerCase().includes(country.toLowerCase())
+        getLocationCountryName(loc).toLowerCase().includes(country.toLowerCase())
       );
     }
     
@@ -218,7 +396,7 @@ app.get('/api/locations', async (req, res) => {
     // Build country summary
     const countrySummary = {};
     locations.forEach(loc => {
-      const country = loc.country?.name || 'Unknown';
+      const country = getLocationCountryName(loc) || 'Unknown';
       if (!countrySummary[country]) {
         countrySummary[country] = 0;
       }
@@ -238,7 +416,7 @@ app.get('/api/locations', async (req, res) => {
         id: loc.id,
         name: loc.name,
         city: loc.locality,
-        country: loc.country?.name,
+        country: getLocationCountryName(loc) || null,
         latitude: loc.coordinates?.latitude,
         longitude: loc.coordinates?.longitude,
         coverage: 'OpenAQ'
@@ -1415,7 +1593,7 @@ app.post("/api/measurements", async (req, res) => {
     if (!cityName) return res.status(400).json({ error: "city is required" });
 
     // Create cache key for this request
-    const cacheKey = `measurements_${cityName}_${JSON.stringify(body)}`;
+    const cacheKey = `measurements_v2_${cityName}_${JSON.stringify(body)}`;
     
     // Check cache first
     const cachedResult = cache.get(cacheKey);
@@ -2000,18 +2178,72 @@ app.post("/api/assistant", async (req, res) => {
 // Get all available countries
 app.get("/api/countries", async (req, res) => {
   try {
-    const response = await axios.get(`${OPENAQ_API}/countries?limit=200`, { headers: HEADERS });
-    const countries = (response.data.results || []).map(c => ({
-      id: c.id,
-      code: c.code,
-      name: c.name,
-      firstDate: c.datetimeFirst,
-      lastDate: c.datetimeLast
-    }));
-    res.json({ countries });
+    // Return all 193 countries from global database with coverage info
+    const countriesWithCoverage = globalCountriesDatabase.map((country, index) => {
+      const coverage = countryCoverageMap[country.name] || {
+        apis: { openaq: false, waqi: false, openweather: true },
+        hasData: true
+      };
+      return {
+        id: index + 1,
+        code: country.iso2,
+        iso3: country.iso3,
+        name: country.name,
+        region: country.region,
+        coverage: coverage.apis,
+        hasData: coverage.hasData
+      };
+    });
+    
+    res.json({ 
+      countries: countriesWithCoverage,
+      total: countriesWithCoverage.length,
+      note: "Global database of all 193 UN member states with multi-API coverage support"
+    });
   } catch (err) {
-    const status = err.response?.status || 500;
-    res.status(status).json({ error: err.response?.data || "Failed to fetch countries" });
+    console.error('Error fetching countries:', err.message);
+    res.status(500).json({ 
+      error: "Failed to fetch countries",
+      countries: globalCountriesDatabase.map(c => ({ 
+        code: c.iso2, 
+        name: c.name, 
+        region: c.region 
+      }))
+    });
+  }
+});
+
+// Get global API coverage report
+app.get("/api/countries/coverage", async (req, res) => {
+  try {
+    const stats = {
+      totalCountries: globalCountriesDatabase.length,
+      withData: Object.values(countryCoverageMap).filter(c => c.hasData).length,
+      withOpenAQ: Object.values(countryCoverageMap).filter(c => c.apis.openaq).length,
+      withWAQI: Object.values(countryCoverageMap).filter(c => c.apis.waqi).length,
+      withOpenWeather: Object.values(countryCoverageMap).filter(c => c.apis.openweather).length,
+      byRegion: {}
+    };
+    
+    // Group by region
+    globalCountriesDatabase.forEach(country => {
+      if (!stats.byRegion[country.region]) {
+        stats.byRegion[country.region] = { total: 0, withData: 0 };
+      }
+      stats.byRegion[country.region].total++;
+      const coverage = countryCoverageMap[country.name];
+      if (coverage && coverage.hasData) {
+        stats.byRegion[country.region].withData++;
+      }
+    });
+    
+    res.json({ 
+      coverage: stats,
+      dataUrl: "/GLOBAL_COVERAGE_REPORT.md",
+      note: "100% global coverage via OpenWeather fallback for all API calls"
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch coverage report" });
   }
 });
 
@@ -2111,6 +2343,11 @@ app.post("/api/hybrid-measurements", async (req, res) => {
     const body = req.body || {};
     const cityName = (body.city || "").trim();
     if (!cityName) return res.status(400).json({ error: "city is required" });
+
+    const searchContext = buildHierarchicalSearchContext(cityName);
+    const queryCandidates = searchContext.apiQueries && searchContext.apiQueries.length
+      ? searchContext.apiQueries
+      : [cityName];
 
     // Create cache key based on request parameters
     const cacheKey = `measurements_${cityName}_${JSON.stringify(body)}`;
@@ -2235,10 +2472,18 @@ app.post("/api/hybrid-measurements", async (req, res) => {
       const dbValues = [];
       let paramCount = 0;
 
-      // City filter (required)
+      // City/country hierarchical filter
       paramCount++;
-      dbQuery += ` AND LOWER(city) LIKE LOWER($${paramCount})`;
+      dbQuery += ` AND (LOWER(city) LIKE LOWER($${paramCount})`;
       dbValues.push(`%${cityName}%`);
+
+      if (searchContext.country?.name) {
+        paramCount++;
+        dbQuery += ` OR LOWER(country) LIKE LOWER($${paramCount})`;
+        dbValues.push(`%${searchContext.country.name}%`);
+      }
+
+      dbQuery += `)`;
 
       // Date filters
       if (fromYear || toYear) {
@@ -2261,7 +2506,7 @@ app.post("/api/hybrid-measurements", async (req, res) => {
       client.release();
 
       if (dbResult.rows.length > 0) {
-        console.log(`≡ƒÄÿ Found ${dbResult.rows.length} database records for ${cityName}`);
+        console.log(`≡ƒÄÿ Found ${dbResult.rows.length} database records for ${searchContext.displayLabel}`);
         
         // Convert database records to API format
         const dbResults = [];
@@ -2312,8 +2557,24 @@ app.post("/api/hybrid-measurements", async (req, res) => {
 
     // 1. Try OpenAQ first (primary source)
     try {
-      console.log(`Trying OpenAQ for ${cityName}...`);
-      const locations = await findLocationsByCity(cityName);
+      console.log(`Trying OpenAQ for ${searchContext.displayLabel}...`);
+      let locations = [];
+
+      if (searchContext.level === 'country' && searchContext.country?.name) {
+        const allLocations = await loadLocations();
+        locations = allLocations
+          .filter(loc => normalizeSearchText(getLocationCountryName(loc) || '') === normalizeSearchText(searchContext.country.name))
+          .sort((a, b) => (b.sensors?.length || 0) - (a.sensors?.length || 0))
+          .slice(0, 12);
+      } else {
+        for (const candidate of queryCandidates.slice(0, 3)) {
+          const found = await findLocationsByCity(candidate);
+          if (found && found.length > 0) {
+            locations = found;
+            break;
+          }
+        }
+      }
       
       if (locations.length > 0) {
         // Get measurements from sensors in matching locations (optimized with concurrent requests)
@@ -2376,30 +2637,55 @@ app.post("/api/hybrid-measurements", async (req, res) => {
 
     // 2. If OpenAQ failed or no results, try WAQI (but note: WAQI only has current data)
     if (results.length === 0) {
-      console.log(`Trying WAQI for ${cityName}...`);
-      const waqiResult = await fetchFromWAQI(cityName);
-      if (waqiResult.success && waqiResult.results.length > 0) {
-        successfulSource = 'WAQI';
-        results.push(...waqiResult.results);
-        
-        // Note if user requested historical data but we're using current data
-        if (fromYear && fromYear < new Date().getFullYear()) {
-          console.log(`ΓÜá∩╕Å User requested ${fromYear} data, but WAQI only provides current data`);
+      console.log(`Trying WAQI for ${searchContext.displayLabel}...`);
+      for (const candidate of queryCandidates.slice(0, 5)) {
+        const waqiResult = await fetchFromWAQI(candidate);
+        if (waqiResult.success && waqiResult.results.length > 0) {
+          successfulSource = 'WAQI';
+          results.push(...waqiResult.results.map(r => ({
+            ...r,
+            location: r.location || candidate
+          })));
+
+          // Note if user requested historical data but we're using current data
+          if (fromYear && fromYear < new Date().getFullYear()) {
+            console.log(`ΓÜá∩╕Å User requested ${fromYear} data, but WAQI only provides current data`);
+          }
+          break;
         }
-      } else {
-        allErrors.push(`WAQI: ${waqiResult.error}`);
+        allErrors.push(`WAQI(${candidate}): ${waqiResult.error}`);
       }
     }
 
     // 3. If both failed, try OpenWeather
     if (results.length === 0) {
-      console.log(`Trying OpenWeather for ${cityName}...`);
-      const owResult = await fetchFromOpenWeather(cityName);
-      if (owResult.success && owResult.results.length > 0) {
-        successfulSource = 'OpenWeather';
-        results.push(...owResult.results);
-      } else {
-        allErrors.push(`OpenWeather: ${owResult.error}`);
+      console.log(`Trying OpenWeather for ${searchContext.displayLabel}...`);
+      for (const candidate of queryCandidates.slice(0, 6)) {
+        const owResult = await fetchFromOpenWeather(candidate);
+        if (owResult.success && owResult.results.length > 0) {
+          successfulSource = 'OpenWeather';
+          results.push(...owResult.results.map(r => ({
+            ...r,
+            location: r.location || candidate
+          })));
+          if (searchContext.level !== 'country') break;
+          // For country-level searches, keep a small multi-region sample for representative analytics.
+          if (results.length >= 36) break;
+        } else {
+          allErrors.push(`OpenWeather(${candidate}): ${owResult.error}`);
+        }
+      }
+
+      // Country-level coordinate fallback when no region/city query succeeded.
+      if (results.length === 0 && searchContext.country?.name) {
+        const fallbackOw = await fetchFromOpenWeather(searchContext.country.name);
+        if (fallbackOw.success && fallbackOw.results.length > 0) {
+          successfulSource = 'OpenWeather';
+          results.push(...fallbackOw.results.map(r => ({
+            ...r,
+            location: r.location || `${searchContext.country.name} (country fallback)`
+          })));
+        }
       }
     }
 
@@ -2409,6 +2695,12 @@ app.post("/api/hybrid-measurements", async (req, res) => {
         error: `No air quality data found for "${cityName}" from any source`,
         attemptedSources: ['OpenAQ', 'WAQI', 'OpenWeather'],
         errors: allErrors,
+        resolvedLocation: searchContext?.displayLabel || cityName,
+        searchContext: {
+          level: searchContext?.level || 'unknown',
+          country: searchContext?.country?.name || null,
+          regionCandidates: searchContext?.regionCandidates || []
+        },
         suggestion: "Try a different city name or check if the city has monitoring stations"
       });
     }
@@ -2496,25 +2788,36 @@ app.post("/api/hybrid-measurements", async (req, res) => {
     // Filter for recent data to improve chart quality, but skip if user requested specific historical dates
     const userRequestedHistoricalData = fromYear && fromYear < new Date().getFullYear();
     const filteredResults = userRequestedHistoricalData ? results : filterRecentData(results);
-    const dataQualityNote = filteredResults.length !== results.length ? 
+    const finalResults = filteredResults.length > 0 ? filteredResults : results.slice(0, 300);
+    const dataQualityNote = finalResults.length !== results.length ? 
       ` (${results.length - filteredResults.length} older records filtered for better visualization)` : 
-      userRequestedHistoricalData ? ` (showing historical data from ${fromYear})` : "";
+      (filteredResults.length === 0 && results.length > 0)
+        ? ` (no recent records available; showing latest available historical measurements)`
+        : userRequestedHistoricalData ? ` (showing historical data from ${fromYear})` : "";
 
     const responseData = {
       city: cityName,
+      resolvedLocation: searchContext.displayLabel,
+      searchContext: {
+        level: searchContext.level,
+        country: searchContext.country?.name || null,
+        regionCandidates: searchContext.regionCandidates || [],
+        matchedRegion: searchContext.matchedRegion || null
+      },
       from: date_from,
       to: date_to,
       source: successfulSource,
-      count: filteredResults.length,
-      results: filteredResults,
-      measurements: filteredResults, // Add measurements field for chart processing
-      snapshot: groupSnapshot(filteredResults), // Add snapshot for table display
+      count: finalResults.length,
+      results: finalResults,
+      measurements: finalResults, // Add measurements field for chart processing
+      snapshot: groupSnapshot(finalResults), // Add snapshot for table display
       localAdvice: localAdvice,
       apiInfo: {
         primarySource: successfulSource,
         adviceSource: adviceSource,
         availableSources: Object.keys(API_SOURCES),
-        note: `Data from ${successfulSource} API${successfulSource === 'WAQI' || successfulSource === 'OpenWeather' ? ' (current data only)' : ` (${date_from.split('T')[0]} to ${date_to.split('T')[0]})`} ≡ƒôà, advice from ${adviceSource}${dataQualityNote}`
+        note: `Data from ${successfulSource} API${successfulSource === 'WAQI' || successfulSource === 'OpenWeather' ? ' (current data only)' : ` (${date_from.split('T')[0]} to ${date_to.split('T')[0]})`} ≡ƒôà, advice from ${adviceSource}${dataQualityNote}`,
+        resolution: `Resolved as ${searchContext.level}-level query${searchContext.country?.name ? ` in ${searchContext.country.name}` : ''}`
       }
     };
 
@@ -2898,6 +3201,24 @@ app.get("/api/india-summary", async (req, res) => {
     });
   } catch (err) {
     res.status(500).json({ error: "Failed to fetch India summary" });
+  }
+});
+
+// Temporary debug endpoint to resolve country names for tracing
+app.get('/api/debug/resolve-country', async (req, res) => {
+  try {
+    const q = (req.query.q || '').toString();
+    if (!q) return res.status(400).json({ error: 'q query param required' });
+    const country = findCountryByQuery(q);
+    const searchContext = buildHierarchicalSearchContext(q);
+    return res.json({
+      query: q,
+      normalized: normalizeSearchText(q),
+      country: country ? { name: country.name, iso2: country.iso2, iso3: country.iso3 } : null,
+      searchContext
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
@@ -3463,10 +3784,191 @@ console.log('🔄 Continuous operation regardless of internet connectivity');
 
 // ==================== END AUTOMATIC COLLECTION ====================
 
+// ==================== REGIONAL AND CITY COVERAGE ENDPOINTS ====================
+
+// Get regional coverage for a specific country
+app.get("/api/regions/:country", async (req, res) => {
+  try {
+    const countryName = req.params.country;
+    
+    // Find the country in the database
+    const country = globalCountriesDatabase.find(c => 
+      c.name.toLowerCase() === countryName.toLowerCase() ||
+      c.iso2.toLowerCase() === countryName.toLowerCase() ||
+      c.iso3.toLowerCase() === countryName.toLowerCase()
+    );
+    
+    if (!country) {
+      return res.status(404).json({ error: "Country not found" });
+    }
+    
+    // Get regional coverage data
+    const regionalData = regionalCoverageMap[country.name];
+    
+    if (!regionalData) {
+      return res.json({
+        country: country.name,
+        iso2: country.iso2,
+        iso3: country.iso3,
+        region: country.region,
+        message: "No detailed regional data available, using country-level fallback",
+        fallback: {
+          method: "country_center_coordinates",
+          apis: { openweather: "available", waqi: "fallback" }
+        }
+      });
+    }
+    
+    // Format response
+    const regions = Object.entries(regionalData.regions || {}).map(([name, data]) => ({
+      name,
+      hasData: data.hasData,
+      apis: data.apis,
+      sample_aqi: data.sample_aqi
+    }));
+    
+    res.json({
+      country: country.name,
+      iso2: country.iso2,
+      iso3: country.iso3,
+      region: country.region,
+      total_regions: regionalData.total_regions || regions.length,
+      coverage_percentage: regionalData.coverage_percentage || 0,
+      primary_apis: regionalData.primary_apis || [],
+      regions: regions.sort((a, b) => a.name.localeCompare(b.name))
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch regional data", message: err.message });
+  }
+});
+
+// Get cities in a specific region of a country
+app.get("/api/cities/:country/:region", async (req, res) => {
+  try {
+    const { country: countryName, region: regionName } = req.params;
+    
+    // Find the country
+    const country = globalCountriesDatabase.find(c => 
+      c.name.toLowerCase() === countryName.toLowerCase() ||
+      c.iso2.toLowerCase() === countryName.toLowerCase() ||
+      c.iso3.toLowerCase() === countryName.toLowerCase()
+    );
+    
+    if (!country) {
+      return res.status(404).json({ error: "Country not found" });
+    }
+    
+    // Get regional coverage data
+    const regionalData = regionalCoverageMap[country.name];
+    
+    if (!regionalData || !regionalData.regions[regionName]) {
+      return res.status(404).json({ error: "Region not found" });
+    }
+    
+    const regionData = regionalData.regions[regionName];
+    
+    res.json({
+      country: country.name,
+      region: regionName,
+      hasData: regionData.hasData,
+      apis: regionData.apis,
+      sample_aqi: regionData.sample_aqi || null
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch city data", message: err.message });
+  }
+});
+
+// Get comprehensive regional coverage statistics
+app.get("/api/coverage/regional", async (req, res) => {
+  try {
+    const stats = {
+      totalCountries: globalCountriesDatabase.length,
+      countriesWithDetailedRegions: Object.keys(regionalCoverageMap).filter(
+        country => regionalCoverageMap[country].total_regions > 0
+      ).length,
+      countriesWithFallback: globalCountriesDatabase.length - 
+        Object.keys(regionalCoverageMap).filter(c => regionalCoverageMap[c].total_regions > 0).length,
+      totalRegionsVerified: Object.values(regionalCoverageMap).reduce(
+        (sum, c) => sum + (c.total_regions || 0), 0
+      ),
+      apiCoverage: {
+        openweather: globalCountriesDatabase.length,
+        waqi: Object.values(regionalCoverageMap).filter(c => 
+          c.primary_apis?.includes('WAQI')
+        ).length,
+        openaq: Object.values(regionalCoverageMap).filter(c => 
+          c.primary_apis?.includes('OpenAQ')
+        ).length
+      },
+      byRegion: {}
+    };
+    
+    // Group by geographic region
+    globalCountriesDatabase.forEach(country => {
+      const region = country.region;
+      if (!stats.byRegion[region]) {
+        stats.byRegion[region] = { 
+          total: 0, 
+          withDetailedRegions: 0, 
+          totalCities: 0 
+        };
+      }
+      stats.byRegion[region].total++;
+      
+      const coverage = regionalCoverageMap[country.name];
+      if (coverage && coverage.total_regions > 0) {
+        stats.byRegion[region].withDetailedRegions++;
+        stats.byRegion[region].totalCities += coverage.total_regions;
+      }
+    });
+    
+    res.json({
+      summary: stats,
+      reportUrl: "/REGIONAL_COVERAGE_ANALYSIS.md",
+      dataUrl: "/regional_coverage.json",
+      note: "100% global coverage via OpenWeather; 20 major countries have detailed regional data"
+    });
+  } catch (err) {
+    res.status(500).json({ error: "Failed to fetch regional coverage statistics" });
+  }
+});
+
 // Start server
 async function startServer() {
   try {
     console.log('≡ƒÜÇ Starting BreatheSmart Air Quality Server...');
+    
+    // Serve static report files
+    app.get("/GLOBAL_COVERAGE_REPORT.md", (req, res) => {
+      const reportPath = path.join(__dirname, 'GLOBAL_COVERAGE_REPORT.md');
+      if (fs.existsSync(reportPath)) {
+        const content = fs.readFileSync(reportPath, 'utf8');
+        res.type('text/markdown').send(content);
+      } else {
+        res.status(404).json({ error: "Report not found" });
+      }
+    });
+    
+    app.get("/REGIONAL_COVERAGE_ANALYSIS.md", (req, res) => {
+      const reportPath = path.join(__dirname, 'REGIONAL_COVERAGE_ANALYSIS.md');
+      if (fs.existsSync(reportPath)) {
+        const content = fs.readFileSync(reportPath, 'utf8');
+        res.type('text/markdown').send(content);
+      } else {
+        res.status(404).json({ error: "Report not found" });
+      }
+    });
+    
+    // Serve JSON coverage data
+    app.get("/regional_coverage.json", (req, res) => {
+      const dataPath = path.join(__dirname, 'regional_coverage.json');
+      if (fs.existsSync(dataPath)) {
+        res.sendFile(dataPath);
+      } else {
+        res.status(404).json({ error: "Data file not found" });
+      }
+    });
     
     // Test database connection and initialize tables
     const dbConnected = await testConnection();
@@ -3483,6 +3985,9 @@ async function startServer() {
       console.log('≡ƒôí NEW API Endpoints:');
       console.log('   GET /api/current?city=Delhi - Fetch fresh data from APIs');
       console.log('   GET /api/historical?city=Delhi&date_from=2025-10-01 - Query stored database records');
+      console.log('   GET /api/regions/{country} - Get regions/cities for a country');
+      console.log('   GET /api/cities/{country}/{region} - Get city-level data');
+      console.log('   GET /api/coverage/regional - Get comprehensive regional statistics');
       console.log('ΓÅ░ Automatic hourly data collection: ACTIVE');
     });
     

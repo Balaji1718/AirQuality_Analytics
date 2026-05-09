@@ -326,6 +326,7 @@ function App() {
   const [advice, setAdvice] = useState(null);
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [globalCountries, setGlobalCountries] = useState([]);
   const [statusBanners, setStatusBanners] = useState({ historical: null, liveMonitoring: null });
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [assistantInput, setAssistantInput] = useState("");
@@ -381,6 +382,24 @@ function App() {
     fetchStatusBanners();
   }, []);
 
+  // Load global countries database on mount
+  React.useEffect(() => {
+    const loadCountries = async () => {
+      try {
+        const response = await apiClient.get("/api/countries");
+        if (response.data.countries) {
+            setGlobalCountries(response.data.countries);
+          console.log(`✅ Loaded ${response.data.countries.length} countries globally`);
+        }
+      } catch (err) {
+        console.error("Failed to load countries:", err);
+        // Set empty array as fallback - API will still work for any country name
+        setGlobalCountries([]);
+      }
+    };
+    loadCountries();
+  }, []);
+
   const handleShow = async () => {
     try {
       setError("");
@@ -389,7 +408,7 @@ function App() {
       setIsLoading(true);
       
       if (!city) {
-        setError("Please enter a city name");
+        setError("Please enter a city or country name");
         setIsLoading(false);
         return;
       }
@@ -522,7 +541,7 @@ function App() {
       }
 
       if (!payload.results || !Array.isArray(payload.results) || payload.results.length === 0) {
-        setError("No air quality measurements found for the specified location and time range. Try different dates or a different city.");
+        setError("No air quality measurements found for the specified location and time range. Try a country, region/state, or local area.");
         setIsLoading(false);
         return;
       }
@@ -551,7 +570,9 @@ function App() {
       }
 
       setData({ 
-        city: payload.city, 
+        city: payload.city,
+        resolvedLocation: payload.resolvedLocation || payload.city,
+        searchContext: payload.searchContext || null,
         snapshot, 
         measurements: validResults,
         results: validResults, // Add results for chart compatibility
@@ -815,9 +836,7 @@ function App() {
     NH3: "#e11d48"
   };
 
-  const tableTitle = data
-    ? `Historical Air Quality Measurements • Historical data from ${data.from || "-"} to ${data.to || "-"}`
-    : "Historical Air Quality Measurements";
+  const countryOptions = Array.from(new Set(globalCountries.map(country => country.name))).sort((a, b) => a.localeCompare(b));
 
   return (
     <div className="main-container">
@@ -826,8 +845,9 @@ function App() {
         <h1 className="main-title">Air Quality Analytics</h1>
         <div className="search-bar">
           <input 
-            placeholder="Enter city (e.g. Delhi)" 
+            placeholder="Enter city or country (e.g. Delhi, India)" 
             value={city} 
+            list="country-suggestions"
             onChange={e => setCity(e.target.value)}
             onKeyDown={e => {
               if (e.key === 'Enter') {
@@ -844,7 +864,17 @@ function App() {
             {isLoading && <span className="spinner"></span>}
             Show Data
           </button>
+          <datalist id="country-suggestions">
+            {countryOptions.map(countryName => (
+              <option key={countryName} value={countryName} />
+            ))}
+          </datalist>
         </div>
+        {globalCountries.length > 0 && (
+          <div style={{ marginTop: "8px", fontSize: "12px", color: "#64748b" }}>
+            Global country list loaded: {globalCountries.length} countries.
+          </div>
+        )}
       </div>
 
       {/* Status Banners */}
@@ -1024,7 +1054,7 @@ function App() {
       {/* Content Section */}
       <div className="content-section">
         <div className="chart-container">
-          <h2>Pollutant Levels {data ? `in ${data.city}` : ""}</h2>
+          <h2>Pollutant Levels {data ? `in ${data.resolvedLocation || data.city}` : ""}</h2>
 
           {data && (
             <div className="pollutant-selector">
@@ -1106,7 +1136,13 @@ function App() {
 
           {data && (
             <div style={{ marginTop: "16px", padding: "12px", backgroundColor: "#f0f8ff", borderRadius: "5px" }}>
-              <strong>Location:</strong> {data.measurements?.[0]?.location || data.city || "Unknown Location"}
+              <strong>Location:</strong> {data.resolvedLocation || data.measurements?.[0]?.location || data.city || "Unknown Location"}
+              {data.searchContext?.level && (
+                <div style={{ fontSize: "12px", color: "#666", marginTop: "4px" }}>
+                  Search level: {data.searchContext.level}
+                  {data.searchContext.country ? ` • Country: ${data.searchContext.country}` : ""}
+                </div>
+              )}
               <div style={{ fontSize: "12px", color: "#666", marginTop: "6px" }}>
                 Historical data from {data.from || "-"} to {data.to || "-"}
               </div>
@@ -1150,7 +1186,6 @@ function App() {
 
         {/* Full-width Data Table Section */}
         <div className="table-section">
-          <h3>{tableTitle}</h3>
           <table>
             <thead>
               <tr><th>Pollutant</th><th>Value</th><th>Unit</th><th>{tableTimelineHeader}</th><th>WHO Status</th></tr>
