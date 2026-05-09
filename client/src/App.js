@@ -1,10 +1,16 @@
 import React, { useState } from "react";
 import axios from "axios";
+import ReactMarkdown from "react-markdown";
 import {
   ResponsiveContainer, XAxis, YAxis, CartesianGrid, Tooltip,
   LineChart, Line
 } from "recharts";
 import "./App.css";
+
+const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || "http://localhost:5000";
+const apiClient = axios.create({
+  baseURL: API_BASE_URL
+});
 
 function groupSnapshot(results) {
   if (!results || !Array.isArray(results) || results.length === 0) {
@@ -237,6 +243,74 @@ function getWHOStatus(pollutant, value, unit) {
   return { status: "Unhealthy", color: "#ef4444", emoji: "😨" };
 }
 
+// Format timestamp strings to DD/MM/YYYY HH:MM format
+function formatTimestamp(ts) {
+  if (!ts) return "-";
+  if (ts === "N/A" || ts === "Latest") return ts;
+  
+  const pad = (n) => String(n).padStart(2, '0');
+  
+  try {
+    // Accept already-short labels
+    if (typeof ts !== 'string') ts = String(ts);
+
+    // Common bucket formats created by bucketBy: "YYYY-MM-DD HH:00", "YYYY-MM-DD", "YYYY-MM"
+    const ymdHour = /^\d{4}-\d{2}-\d{2} \d{2}:00$/;
+    const ymd = /^\d{4}-\d{2}-\d{2}$/;
+    const ym = /^\d{4}-\d{2}$/;
+
+    if (ymdHour.test(ts)) {
+      const parts = ts.split(' ');
+      const dateParts = parts[0].split('-');
+      const timeParts = parts[1].split(':');
+      const day = dateParts[2];
+      const month = dateParts[1];
+      const year = dateParts[0];
+      const hour = timeParts[0];
+      return `${day}/${month}/${year} ${hour}:00`;
+    }
+    if (ymd.test(ts)) {
+      const parts = ts.split('-');
+      const day = parts[2];
+      const month = parts[1];
+      const year = parts[0];
+      return `${day}/${month}/${year}`;
+    }
+    if (ym.test(ts)) {
+      const parts = ts.split('-');
+      const month = parts[1];
+      const year = parts[0];
+      return `01/${month}/${year}`;
+    }
+
+    // Fallback: try parsing ISO or other date strings
+    const d = new Date(ts);
+    if (!isNaN(d)) {
+      const day = pad(d.getUTCDate());
+      const month = pad(d.getUTCMonth() + 1);
+      const year = d.getUTCFullYear();
+      const hour = pad(d.getUTCHours());
+      const minute = pad(d.getUTCMinutes());
+      
+      // If time component is midnight, show date only
+      if (d.getUTCHours() === 0 && d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0) {
+        return `${day}/${month}/${year}`;
+      }
+      return `${day}/${month}/${year} ${hour}:${minute}`;
+    }
+  } catch (e) {
+    // ignore and fall through
+  }
+  return ts; // last resort
+}
+
+// Formatter used by chart XAxis ticks and tooltip labels
+function formatTick(value) {
+  if (!value && value !== 0) return '';
+  if (value === 'Latest') return 'Latest';
+  return formatTimestamp(value);
+}
+
 function App() {
   const [city, setCity] = useState("");
   const [fromYear, setFromYear] = useState("");
@@ -272,11 +346,11 @@ function App() {
     const fetchStatusBanners = async () => {
       try {
         // Fetch historical data availability
-        const historicalRes = await axios.get("/api/data-availability");
+        const historicalRes = await apiClient.get("/api/data-availability");
         const historicalData = historicalRes.data;
         
         // Fetch live monitoring status
-        const liveRes = await axios.get("/api/collection-status");
+        const liveRes = await apiClient.get("/api/collection-status");
         const liveData = liveRes.data;
         
         // Use common date range instead of overall range for better accuracy
@@ -437,7 +511,7 @@ function App() {
         toHour: validToHour
       };
 
-      const res = await axios.post("/api/hybrid-measurements", body);
+      const res = await apiClient.post("/api/hybrid-measurements", body);
       const payload = res.data;
       
       // Validate response data
@@ -497,16 +571,20 @@ function App() {
 
       try {
         // Use filtered/valid results for advice generation
-        const adviceRes = await axios.post("/api/insights", { city: payload.city, data: validResults });
+        const adviceRes = await apiClient.post("/api/insights", { city: payload.city, data: validResults });
         const adviceSource = adviceRes.data.source || "Health Advisory System";
         setAdvice({
           text: adviceRes.data.insights || "",
           source: adviceSource,
-          isAI: adviceSource.includes("Groq") || adviceSource.includes("OpenRouter")
+          isAI: /Groq|OpenRouter|OpenAI|AI/i.test(adviceSource)
         });
       } catch (err) {
         console.error("Advice generation failed:", err.message);
-        setError(err.response?.data?.error || "Failed to generate advice");
+        setAdvice({
+          text: `Air quality data is available for ${payload.city}, but advice generation is currently unavailable. Please use general outdoor precautions and check official alerts.`,
+          source: "Fallback Advisory",
+          isAI: false
+        });
       }
       setIsLoading(false);
     } catch (err) {
@@ -546,7 +624,7 @@ function App() {
     setAssistantLoading(true);
 
     try {
-      const response = await axios.post("/api/assistant", {
+      const response = await apiClient.post("/api/assistant", {
         question,
         appContext: assistantContext
       });
@@ -596,19 +674,6 @@ function App() {
     : "Current Data";
   const visiblePollutants = selectedPollutants.length ? selectedPollutants : availablePollutants;
   const snapshotLookup = new Map(snapshotSeries.map(item => [item.pollutant, item]));
-  const getTableRowForPollutant = pollutant => {
-    const snapshotRow = snapshotLookup.get(pollutant) || null;
-    const originalMeasurement = data?.measurements?.find(m => m.pollutant?.toUpperCase() === pollutant) || null;
-    return {
-      pollutant,
-      snapshotRow,
-      originalMeasurement,
-      value: snapshotRow?.value ?? "N/V",
-      unit: snapshotRow ? getActualUnit(pollutant, snapshotRow.unit) : "N/V",
-      timeline: snapshotRow ? (snapshotRow.dateLocal || snapshotRow.dateUTC || originalMeasurement?.dateLocal || originalMeasurement?.dateUTC || "N/V") : "N/V",
-      status: snapshotRow ? getWHOStatus(pollutant, snapshotRow.value, snapshotRow.unit) : null
-    };
-  };
   
   const timeSeries = data ? (() => {
     // Determine bucket type based on filter granularity
@@ -638,6 +703,63 @@ function App() {
     
     return buckets;
   })() : [];
+  
+  // Build lookup for filtered data from timeSeries (when filters are active)
+  const filteredDataLookup = new Map();
+  if (hasDateFilters && timeSeries.length > 0) {
+    visiblePollutants.forEach(pollutant => {
+      // Get all data points for this pollutant from filtered timeSeries
+      const dataPoints = timeSeries
+        .filter(point => typeof point[pollutant] === "number")
+        .map(point => ({
+          value: point[pollutant],
+          time: point.time
+        }));
+      
+      if (dataPoints.length > 0) {
+        // Use the last (most recent) data point from the filtered range
+        const lastPoint = dataPoints[dataPoints.length - 1];
+        const avgValue = dataPoints.reduce((sum, p) => sum + p.value, 0) / dataPoints.length;
+        
+        filteredDataLookup.set(pollutant, {
+          value: lastPoint.value,
+          avgValue: avgValue,
+          time: lastPoint.time,
+          count: dataPoints.length
+        });
+      }
+    });
+  }
+  
+  const getTableRowForPollutant = pollutant => {
+    const originalMeasurement = data?.measurements?.find(m => m.pollutant?.toUpperCase() === pollutant) || null;
+    
+    // If filters are active and we have filtered data, use it
+    if (hasDateFilters && filteredDataLookup.has(pollutant)) {
+      const filteredRow = filteredDataLookup.get(pollutant);
+      return {
+        pollutant,
+        snapshotRow: null,
+        originalMeasurement,
+        value: filteredRow.value ?? "N/A",
+        unit: originalMeasurement ? getActualUnit(pollutant, originalMeasurement.unit) : "N/A",
+        timeline: filteredRow.time ?? "N/A",
+        status: getWHOStatus(pollutant, filteredRow.value, originalMeasurement?.unit)
+      };
+    }
+    
+    // Otherwise use snapshot (current data)
+    const snapshotRow = snapshotLookup.get(pollutant) || null;
+    return {
+      pollutant,
+      snapshotRow,
+      originalMeasurement,
+      value: snapshotRow?.value ?? "N/A",
+      unit: snapshotRow ? getActualUnit(pollutant, snapshotRow.unit) : "N/A",
+      timeline: snapshotRow ? (snapshotRow.dateLocal || snapshotRow.dateUTC || originalMeasurement?.dateLocal || originalMeasurement?.dateUTC || "N/A") : "N/A",
+      status: snapshotRow ? getWHOStatus(pollutant, snapshotRow.value, snapshotRow.unit) : null
+    };
+  };
 
   const togglePollutant = pollutant => {
     setSelectedPollutants(prev => (
@@ -957,12 +1079,13 @@ function App() {
                             tick={{ fontSize: 11 }}
                             interval="preserveStartEnd"
                             label={{ value: "Timeline", position: "insideBottom", offset: -5, style: { fontSize: 11, fill: "#64748b" } }}
+                            tickFormatter={formatTick}
                           />
                           <YAxis
                             tick={{ fontSize: 11 }}
                             label={{ value: "Value", angle: -90, position: "insideLeft", style: { fontSize: 11, fill: "#64748b" } }}
                           />
-                          <Tooltip />
+                          <Tooltip labelFormatter={formatTick} />
                           <Line
                             type="monotone"
                             dataKey="value"
@@ -1048,9 +1171,9 @@ function App() {
                     </td>
                     <td>{tableRow.value}</td>
                     <td>{tableRow.unit}</td>
-                    <td>{tableRow.timeline}</td>
+                    <td>{formatTimestamp(tableRow.timeline)}</td>
                     <td style={{ color: tableRow.status?.color || "#64748b", fontWeight: "600" }}>
-                      {tableRow.status ? <><span style={{ marginRight: "4px" }}>{tableRow.status.emoji}</span>{tableRow.status.status}</> : "N/V"}
+                      {tableRow.status ? <><span style={{ marginRight: "4px" }}>{tableRow.status.emoji}</span>{tableRow.status.status}</> : "N/A"}
                     </td>
                   </tr>
                 );
@@ -1099,9 +1222,29 @@ function App() {
               <div className={`assistant-message ${message.role}`} key={`${message.role}-${index}`}>
                 <div className="assistant-message-bubble">
                   <div className="assistant-message-source">
-                    {message.source || (message.role === "user" ? "You" : "BreatheSmart Assistant")}
+                    {message.role === "user" ? "👤 You" : "🤖 BreatheSmart Assistant"}
                   </div>
-                  <div className="assistant-message-content">{message.content}</div>
+                  <div className="assistant-message-content">
+                    {message.role === "user" ? (
+                      message.content
+                    ) : (
+                      <ReactMarkdown
+                        components={{
+                          p: ({children}) => <p style={{margin: '8px 0', lineHeight: '1.6'}}>{children}</p>,
+                          strong: ({children}) => <strong style={{fontWeight: 600}}>{children}</strong>,
+                          em: ({children}) => <em style={{fontStyle: 'italic'}}>{children}</em>,
+                          ul: ({children}) => <ul style={{marginLeft: '16px', margin: '8px 0'}}>{children}</ul>,
+                          ol: ({children}) => <ol style={{marginLeft: '16px', margin: '8px 0'}}>{children}</ol>,
+                          li: ({children}) => <li style={{marginBottom: '4px', lineHeight: '1.5'}}>{children}</li>,
+                          h1: ({children}) => <h3 style={{margin: '10px 0 5px 0', fontSize: '1.1em', fontWeight: 600}}>{children}</h3>,
+                          h2: ({children}) => <h4 style={{margin: '10px 0 5px 0', fontSize: '1.05em', fontWeight: 600}}>{children}</h4>,
+                          h3: ({children}) => <h5 style={{margin: '8px 0 4px 0', fontSize: '1em', fontWeight: 600}}>{children}</h5>,
+                        }}
+                      >
+                        {message.content}
+                      </ReactMarkdown>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}

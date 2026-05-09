@@ -36,4 +36,23 @@ function coerceNumber(v) {
   return null;
 }
 
-module.exports = { normalizePollutant, coerceNumber };
+function normalizeLocation(locationStr) {
+  if (!locationStr || typeof locationStr !== 'string') return locationStr;
+  
+  // Split by comma and filter out duplicates while preserving order
+  const parts = locationStr.split(',').map(p => p.trim());
+  const seen = new Set();
+  const unique = [];
+  
+  for (const part of parts) {
+    const lower = part.toLowerCase();
+    if (!seen.has(lower)) {
+      seen.add(lower);
+      unique.push(part);
+    }
+  }
+  
+  return unique.join(', ');
+}
+
+module.exports = { normalizePollutant, coerceNumber, normalizeLocation };

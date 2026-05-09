@@ -8,7 +8,8 @@ require("dotenv").config();
 // Import database functions
 const { testConnection, initializeTables, storeAirQualityData, pool } = require('./db');
 // Normalization helpers
-const { normalizePollutant, coerceNumber } = require('./utils/normalize');
+const { normalizePollutant, coerceNumber, normalizeLocation } = require('./utils/normalize');
+const { buildSourceComparison } = require('./utils/locationCoverage');
 
 const app = express();
 app.use(cors());
@@ -59,165 +60,85 @@ async function loadLocations() {
 }
 
 async function findLocationsByCity(cityName) {
-  console.log(`🔍 Finding locations for city: ${cityName}`);
-  
+  console.log(`🔍 Finding locations for: ${cityName}`);
   try {
-    const { validateLocationMatch, findIndianCity, isWithinIndiaBounds } = require('./utils/locationValidator');
     const locations = await loadLocations();
-    
-    // Check if this is a known Indian city for better validation
-    const knownIndianCity = findIndianCity(cityName);
-    if (knownIndianCity) {
-      console.log(`📍 Recognized Indian city: ${cityName} -> ${knownIndianCity.canonical}`);
-    }
-    
-    // Enhanced city name mappings with validation
-    const cityMappings = {
-      'Mumbai': ['Mumbai', 'Bombay'],
-      'Chennai': ['Chennai', 'Madras'],
-      'Bengaluru': ['Bengaluru', 'Bangalore'],
-      'Delhi': ['Delhi', 'New Delhi'],
-      'Kolkata': ['Kolkata', 'Calcutta'],
-      'Hyderabad': ['Hyderabad'],
-      'Pune': ['Pune', 'Poona'],
-      'Ahmedabad': ['Ahmedabad'],
-      'Jaipur': ['Jaipur'],
-      'Lucknow': ['Lucknow'],
-      'Kanpur': ['Kanpur'],
-      'Nagpur': ['Nagpur'],
-      'Visakhapatnam': ['Visakhapatnam', 'Vizag'],
-      'Bhopal': ['Bhopal'],
-      'Patna': ['Patna']
+    const lowerCity = cityName.trim().toLowerCase();
+
+    // Country/region mappings for fuzzy matching
+    const countryMappings = {
+      'america': 'United States',
+      'us': 'United States',
+      'usa': 'United States',
+      'united states': 'United States',
+      'united states of america': 'United States',
+      'uk': 'United Kingdom',
+      'britain': 'United Kingdom',
+      'england': 'United Kingdom',
+      'oz': 'Australia',
+      'aus': 'Australia',
+      'in': 'India',
+      'cn': 'China',
+      'br': 'Brazil',
+      'mx': 'Mexico'
     };
-    
-    // Get all possible names for this city
-    const cityVariations = cityMappings[cityName] || [cityName];
-    
-    let matched = [];
-    
-    // Try each city name variation with validation
-    for (const cityVariation of cityVariations) {
-      const lower = cityVariation.trim().toLowerCase();
-      
-      // Find locations that match the city name
-      const cityMatches = locations.filter(loc => {
-        const locName = loc.name?.toLowerCase() || '';
-        const locLocality = loc.locality?.toLowerCase() || '';
-        const locCountry = loc.country?.name?.toLowerCase() || '';
-        
-        return locName.includes(lower) || 
-               locLocality.includes(lower) || 
-               (locCountry.includes(lower) && locCountry.includes('india'));
-      });
-      
-      // Validate each match
-      for (const loc of cityMatches) {
-        const validation = validateLocationMatch(
-          cityName,
-          loc.name || loc.locality,
-          loc.coordinates?.latitude,
-          loc.coordinates?.longitude,
-          loc.country?.name
-        );
-        
-        if (validation.isValid) {
-          matched.push({
-            ...loc,
-            validation: validation
-          });
-          console.log(`✅ Location validated: ${loc.name} (confidence: ${validation.confidence})`);
-        } else {
-          console.log(`❌ Location rejected: ${loc.name} - ${validation.reason}`);
-        }
-      }
-      
-      // If we found valid matches, break early
-      if (matched.length > 0) {
-        console.log(`🎯 Found ${matched.length} validated locations for ${cityVariation}`);
-        break;
+
+    // If input is a known country synonym, return top stations for that country
+    const mapped = countryMappings[lowerCity];
+    if (mapped) {
+      const countryLocations = locations.filter(loc => (loc.country?.name || '').toLowerCase() === mapped.toLowerCase());
+      if (countryLocations.length > 0) {
+        console.log(`🌍 Found ${countryLocations.length} locations in ${mapped}`);
+        return countryLocations;
       }
     }
-    
-    // If still no matches, try broader search with validation
-    if (matched.length === 0) {
-      for (const cityVariation of cityVariations) {
-        const lower = cityVariation.trim().toLowerCase();
-        const broaderMatches = locations.filter(loc => 
-          loc.name?.toLowerCase().indexOf(lower) !== -1
-        );
-        
-        // Validate broader matches more strictly
-        for (const loc of broaderMatches) {
-          const validation = validateLocationMatch(
-            cityName,
-            loc.name,
-            loc.coordinates?.latitude,
-            loc.coordinates?.longitude,
-            loc.country?.name
-          );
-          
-          // Only accept high-confidence matches for broader search
-          if (validation.isValid && validation.confidence >= 0.7) {
-            matched.push({
-              ...loc,
-              validation: validation
-            });
-            console.log(`✅ Broader search validated: ${loc.name} (confidence: ${validation.confidence})`);
-          }
-        }
-        
-        if (matched.length > 0) {
-          console.log(`🔍 Broader search found ${matched.length} validated locations for ${cityVariation}`);
-          break;
-        }
-      }
+
+    // Direct country name match
+    const directCountry = locations.filter(loc => (loc.country?.name || '').toLowerCase().includes(lowerCity));
+    if (directCountry.length > 0) {
+      console.log(`🌍 Found ${directCountry.length} locations matching country ${cityName}`);
+      return directCountry;
     }
-    
-    // Sort by validation confidence (highest first)
-    matched.sort((a, b) => (b.validation?.confidence || 0) - (a.validation?.confidence || 0));
-    
-    console.log(`✅ Total validated locations found for ${cityName}: ${matched.length}`);
-    return matched;
-    
-  } catch (error) {
-    console.error(`❌ Failed to find validated locations for ${cityName}:`, error.message);
-    
-    // Fallback to original behavior if validation fails
-    const locations = await loadLocations();
-    const cityMappings = {
-      'Mumbai': ['Mumbai', 'Bombay'],
-      'Chennai': ['Chennai', 'Madras'],
-      'Bengaluru': ['Bengaluru', 'Bangalore'],
-      'Delhi': ['Delhi', 'New Delhi'],
-      'Kolkata': ['Kolkata', 'Calcutta'],
-      'Hyderabad': ['Hyderabad']
-    };
-    
-    const cityVariations = cityMappings[cityName] || [cityName];
-    let matched = [];
-    
-    for (const cityVariation of cityVariations) {
-      const lower = cityVariation.trim().toLowerCase();
-      const cityMatches = locations.filter(loc => 
-        loc.name?.toLowerCase().includes(lower) ||
-        loc.locality?.toLowerCase()?.includes(lower)
-      );
-      matched = matched.concat(cityMatches);
-      
-      if (matched.length > 0) {
-        console.log(`⚠️  Fallback found ${matched.length} locations for ${cityVariation}`);
-        break;
-      }
+
+    // City name search (name or locality)
+    let cityMatches = locations.filter(loc => {
+      const locName = (loc.name || '').toLowerCase();
+      const locLocality = (loc.locality || '').toLowerCase();
+      return locName.includes(lowerCity) || locLocality.includes(lowerCity);
+    });
+    if (cityMatches.length > 0) {
+      console.log(`✅ Found ${cityMatches.length} locations matching "${cityName}"`);
+      return cityMatches;
     }
-    
-    return matched;
+
+    // Fuzzy full-text match
+    cityMatches = locations.filter(loc => {
+      const full = `${loc.name || ''} ${loc.locality || ''} ${loc.country?.name || ''}`.toLowerCase();
+      return full.includes(lowerCity);
+    });
+    if (cityMatches.length > 0) {
+      console.log(`✅ Fuzzy match found ${cityMatches.length} locations`);
+      return cityMatches;
+    }
+
+    // No direct match — return representative suggestions from major countries
+    console.log(`⚠️ No locations found for "${cityName}". Returning representative stations from top countries.`);
+    const suggestions = locations.filter(loc => {
+      const c = loc.country?.name;
+      return ['United States', 'India', 'China', 'United Kingdom', 'Canada', 'Australia'].includes(c);
+    });
+    return suggestions;
+  } catch (err) {
+    console.error(`❌ Error finding locations for ${cityName}:`, err.message);
+    return [];
   }
 }
 
 function groupSnapshot(results) {
   const map = {};
   results.forEach(r => {
-    const key = r.pollutant.toUpperCase();
+    const key = normalizePollutant(r.pollutant);
+    if (!key) return;
     if (!map[key]) map[key] = { sum: 0, count: 0, unit: r.unit };
     map[key].sum += r.value;
     map[key].count += 1;
@@ -375,6 +296,35 @@ app.get('/api/locations/summary', async (req, res) => {
 });
 
 /**
+ * GET /api/location-analysis - Compare current coverage with fallback source strategy
+ * This is read-only and intended for coverage analysis / routing decisions.
+ */
+app.get('/api/location-analysis', async (req, res) => {
+  try {
+    const { query = '' } = req.query;
+    const locations = await loadLocations();
+    const matchedLocations = query ? await findLocationsByCity(query) : [];
+
+    res.json({
+      success: true,
+      generatedAt: new Date().toISOString(),
+      ...buildSourceComparison({
+        locations,
+        query,
+        matchedLocations,
+      }),
+    });
+  } catch (error) {
+    console.error('Location analysis error:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Failed to build location coverage analysis',
+      details: error.message,
+    });
+  }
+});
+
+/**
  * POST /api/store - Manually trigger data storage (for testing)
  * Continuous operation using multiple data sources with intelligent fallback
  */
@@ -421,92 +371,298 @@ app.post('/api/store', async (req, res) => {
  */
 app.get("/api/current", async (req, res) => {
   try {
-    const { city } = req.query;
+    const { city, limitStations = 20 } = req.query;
     if (!city) {
       return res.status(400).json({ error: "City parameter is required" });
     }
 
     console.log(`≡ƒöä Fetching current data for ${city}...`);
 
-    // Use existing hybrid API logic to get fresh data
-    const locations = await findLocationsByCity(city);
-    if (locations.length === 0) {
-      return res.status(404).json({ error: `No monitoring locations found for ${city}` });
-    }
+    // Normalize common region/country synonyms (e.g. 'America' -> 'United States')
+    const synonyms = {
+      'america': 'United States',
+      'usa': 'United States',
+      'us': 'United States',
+      'united states of america': 'United States',
+      'uk': 'United Kingdom',
+      'great britain': 'United Kingdom',
+      'britain': 'United Kingdom',
+      'oz': 'Australia',
+      'aus': 'Australia'
+    };
 
-    let allResults = [];
-    let successfulSource = null;
+    const lowerCity = city.trim().toLowerCase();
+    const resolvedQuery = synonyms[lowerCity] || city;
 
-    // Try OpenAQ first
-    try {
-      for (const location of locations.slice(0, 2)) {
-        if (location.sensors && location.sensors.length > 0) {
-          for (const sensor of location.sensors.slice(0, 3)) {
-            try {
-              const url = `${OPENAQ_API}/sensors/${sensor.id}/measurements?limit=10&sort=desc`;
-              const response = await axios.get(url, { headers: HEADERS, timeout: 10000 });
-              
-              const sensorResults = (response.data.results || []).map(r => ({
-                pollutant: r.parameter?.name || 'unknown',
-                value: r.value,
-                unit: r.parameter?.units || '',
-                dateUTC: r.period?.datetimeTo?.utc,
-                location: location.name
-              }));
-              
-              allResults = allResults.concat(sensorResults);
-              successfulSource = 'OpenAQ';
-            } catch (sensorErr) {
-              console.log(`Sensor ${sensor.id} failed: ${sensorErr.message}`);
-            }
-          }
-        }
-      }
-    } catch (openaqErr) {
-      console.log('OpenAQ failed, trying WAQI...');
-    }
-
-    // Fallback to WAQI if OpenAQ didn't work
-    if (allResults.length === 0) {
-      try {
-        const waqiResult = await fetchFromWAQI(city);
-        if (waqiResult.success) {
-          allResults = waqiResult.data;
-          successfulSource = 'WAQI';
-        }
-      } catch (waqiErr) {
-        console.log('WAQI also failed:', waqiErr.message);
-      }
-    }
-
-    if (allResults.length === 0) {
-      return res.status(404).json({ 
-        error: `No current air quality data available for ${city}`,
-        message: "Try checking the city name or try again later"
+    // Resolve candidate monitoring locations (may return country-level lists)
+    const locations = await findLocationsByCity(resolvedQuery);
+    if (!locations || locations.length === 0) {
+      // Provide helpful suggestions rather than a hard 404
+      const allLocs = await loadLocations();
+      const countryCounts = {};
+      allLocs.forEach(l => {
+        const c = l.country?.name || 'Unknown';
+        countryCounts[c] = (countryCounts[c] || 0) + 1;
+      });
+      const topCountries = Object.entries(countryCounts).sort((a,b)=>b[1]-a[1]).slice(0,10).map(c=>({ country: c[0], stations: c[1] }));
+      return res.json({
+        success: false,
+        message: `No monitoring locations found for ${city}`,
+        suggestion: `Try a country name like 'United States' or search specific cities.`,
+        top_countries: topCountries
       });
     }
 
-    // Format response with both measurements and results for frontend compatibility
-    const responseData = {
-      city: city,
-      source: successfulSource,
-      timestamp: new Date().toISOString(),
-      count: allResults.length,
-      current_data: allResults, // Keep for backward compatibility
-      measurements: allResults, // For table component
-      results: allResults,      // For chart component
-      snapshot: groupSnapshot(allResults),
-      message: `Fresh air quality data from ${successfulSource} API`
+    // Choose representative stations (limit for efficiency)
+    const MAX_STATIONS = Math.min(parseInt(limitStations, 10) || 20, 50);
+    const stations = locations.slice(0, MAX_STATIONS);
+
+    // Fetch latest measurements for each station in parallel batches to avoid overload
+    const BATCH_SIZE = 6;
+    const allResults = [];
+
+    const fetchMeasurementsForStation = async (loc) => {
+      try {
+        // Use /measurements endpoint with location_id (proven to work)
+        if (loc.id) {
+          const url = `${OPENAQ_API}/measurements?location_id=${encodeURIComponent(loc.id)}&limit=50&sort=desc`;
+          const resp = await axios.get(url, { headers: HEADERS, timeout: REQUEST_TIMEOUT });
+          const results = (resp.data.results || []).map(r => ({
+            pollutant: (r.parameter || '').toString(),
+            value: r.value,
+            unit: r.unit || getUnitForPollutant((r.parameter||'').toLowerCase()),
+            dateUTC: r.date?.utc || r.lastUpdated || null,
+            location: loc.name || loc.locality || loc.id,
+            source: 'OpenAQ'
+          }));
+          return results;
+        }
+
+        // Fallback: query by location name
+        const url = `${OPENAQ_API}/measurements?location=${encodeURIComponent(loc.name || loc.locality || '')}&limit=50&sort=desc`;
+        const resp = await axios.get(url, { headers: HEADERS, timeout: REQUEST_TIMEOUT });
+        return (resp.data.results || []).map(r => ({
+          pollutant: (r.parameter || '').toString(),
+          value: r.value,
+          unit: r.unit || getUnitForPollutant((r.parameter||'').toLowerCase()),
+          dateUTC: r.date?.utc || r.lastUpdated || null,
+          location: loc.name || loc.locality || 'unknown',
+          source: 'OpenAQ'
+        }));
+      } catch (e) {
+        console.log(`Failed fetching measurements for ${loc.name || loc.id}: ${e.message}`);
+        return [];
+      }
     };
 
-    console.log(`Γ£à Successfully fetched current data for ${city} from ${successfulSource}`);
-    res.json(responseData);
+    for (let i = 0; i < stations.length; i += BATCH_SIZE) {
+      const batch = stations.slice(i, i + BATCH_SIZE);
+      const batchPromises = batch.map(loc => fetchMeasurementsForStation(loc));
+      const settled = await Promise.allSettled(batchPromises);
+      for (const s of settled) {
+        if (s.status === 'fulfilled' && Array.isArray(s.value) && s.value.length) {
+          allResults.push(...s.value);
+        }
+      }
+      // small delay to avoid hitting rate limits (non-blocking)
+      await new Promise(r => setTimeout(r, 120));
+    }
+
+    // If OpenAQ returned nothing, try WAQI fallback (existing helper)
+    let successfulSource = allResults.length > 0 ? 'OpenAQ' : null;
+    if (allResults.length === 0) {
+      try {
+        const waqiQuery = resolvedQuery || city;
+        let waqiResult = await fetchFromWAQI(waqiQuery);
+
+        // Retry with original city if resolved query didn't work
+        if ((!waqiResult || !waqiResult.success || !waqiResult.results?.length) && waqiQuery !== city) {
+          waqiResult = await fetchFromWAQI(city);
+        }
+
+        if (waqiResult && waqiResult.success && waqiResult.results && waqiResult.results.length) {
+          allResults.push(...waqiResult.results);
+          successfulSource = 'WAQI';
+        }
+      } catch (waqiErr) {
+        console.log('WAQI fallback failed:', waqiErr.message);
+      }
+    }
+
+    if (allResults.length === 0) {
+      try {
+        const owQuery = resolvedQuery || city;
+        let owResult = await fetchFromOpenWeather(owQuery);
+
+        // Retry with original city if resolved query didn't work
+        if ((!owResult || !owResult.success || !owResult.results?.length) && owQuery !== city) {
+          owResult = await fetchFromOpenWeather(city);
+        }
+
+        // Final fallback for broad queries: use first matched station coordinates directly
+        if ((!owResult || !owResult.success || !owResult.results?.length) && stations.length > 0) {
+          const coordCandidate = stations.find(s => s.coordinates?.latitude && s.coordinates?.longitude);
+          if (coordCandidate) {
+            const lat = coordCandidate.coordinates.latitude;
+            const lon = coordCandidate.coordinates.longitude;
+            const url = `${API_SOURCES.openweather.baseUrl}?lat=${lat}&lon=${lon}&appid=${process.env.OPENWEATHER_API_KEY}`;
+            const response = await axios.get(url, { timeout: REQUEST_TIMEOUT });
+            const data = response.data?.list?.[0];
+            if (data?.components) {
+              owResult = {
+                success: true,
+                source: 'OpenWeather',
+                results: Object.entries(data.components).map(([pollutant, value]) => ({
+                  pollutant,
+                  value,
+                  unit: pollutant === 'co' ? 'mg/m³' : 'µg/m³',
+                  dateUTC: new Date((data.dt || Math.floor(Date.now() / 1000)) * 1000).toISOString(),
+                  location: `${coordCandidate.name || city}, ${coordCandidate.country?.name || ''}`.trim(),
+                  source: 'OpenWeather'
+                }))
+              };
+            }
+          }
+        }
+
+        if (owResult && owResult.success && owResult.results && owResult.results.length) {
+          allResults.push(...owResult.results);
+          successfulSource = 'OpenWeather';
+        }
+      } catch (owErr) {
+        console.log('OpenWeather fallback failed:', owErr.message);
+      }
+    }
+
+    if (allResults.length === 0) {
+      // Try historical DB fallback by city or country
+      try {
+        const client = await pool.connect();
+        const countryLike = resolvedQuery || city;
+        const dbQuery = `SELECT * FROM air_quality_data WHERE LOWER(city) LIKE LOWER($1) OR LOWER(country) LIKE LOWER($2) ORDER BY timestamp DESC LIMIT 200`;
+        const dbRes = await client.query(dbQuery, [`%${city}%`, `%${countryLike}%`]);
+        client.release();
+
+        if (dbRes && dbRes.rows && dbRes.rows.length > 0) {
+          const formatted = dbRes.rows.flatMap(row => {
+            return ['pm25','pm10','no2','so2','o3','co'].map(p => {
+              return row[p] !== null && row[p] !== undefined ? {
+                pollutant: p,
+                value: parseFloat(row[p]),
+                unit: getUnitForPollutant(p),
+                dateUTC: row.timestamp,
+                location: `${row.city}, ${row.country}`,
+                source: row.api_source || 'database'
+              } : null;
+            }).filter(Boolean);
+          });
+
+          if (formatted.length > 0) {
+            const normalized = formatted.map(r => ({
+              pollutant: normalizePollutant(r.pollutant),
+              value: coerceNumber(r.value),
+              unit: r.unit,
+              dateUTC: r.dateUTC,
+              location: normalizeLocation(r.location),
+              source: r.source
+            }));
+
+            const responseData = {
+              success: true,
+              city: city,
+              source: 'Database (historical)',
+              timestamp: new Date().toISOString(),
+              count: normalized.length,
+              current_data: normalized,
+              measurements: normalized,
+              results: normalized,
+              snapshot: groupSnapshot(normalized),
+              message: `Returning most recent historical data for ${city} / ${countryLike}`
+            };
+
+            return res.json(responseData);
+          }
+        }
+      } catch (dbErr) {
+        console.log('DB fallback failed:', dbErr.message);
+      }
+
+      // Last resort: generate offline output so the user always gets a result
+      const offline = generateOfflineData(resolvedQuery || city);
+      if (offline?.success && offline.data?.length) {
+        const normalizedOffline = offline.data
+          .map(r => ({
+            pollutant: normalizePollutant((r.pollutant || '').toString()),
+            value: coerceNumber(r.value),
+            unit: r.unit || getUnitForPollutant((r.pollutant||'').toLowerCase()),
+            dateUTC: r.dateUTC || new Date().toISOString(),
+            location: normalizeLocation(r.location || `${city}`),
+            source: r.source || 'Offline Generated'
+          }))
+          .filter(r => r.pollutant && r.value !== null && r.value !== undefined);
+
+        return res.json({
+          success: true,
+          city,
+          source: 'Offline Generated',
+          timestamp: new Date().toISOString(),
+          count: normalizedOffline.length,
+          current_data: normalizedOffline,
+          measurements: normalizedOffline,
+          results: normalizedOffline,
+          snapshot: groupSnapshot(normalizedOffline),
+          message: `Fallback offline data generated for ${city}`,
+          note: 'Generated output because live and historical sources were unavailable.'
+        });
+      }
+
+      // Absolute final fallback if offline generation unexpectedly fails
+      return res.json({
+        city,
+        source: 'Fallback',
+        timestamp: new Date().toISOString(),
+        count: 0,
+        current_data: [],
+        measurements: [],
+        results: [],
+        snapshot: [],
+        message: `No data could be generated for ${city}`
+      });
+    }
+
+    // Normalize pollutant identifiers and build snapshot
+    const normalized = allResults
+      .map(r => ({
+        pollutant: normalizePollutant((r.pollutant || '').toString()),
+        value: coerceNumber(r.value),
+        unit: r.unit || getUnitForPollutant((r.pollutant||'').toLowerCase()),
+        dateUTC: r.dateUTC || r.date || null,
+        location: normalizeLocation(r.location || r.station || 'unknown'),
+        source: r.source || successfulSource || 'OpenAQ'
+      }))
+      .filter(r => r.pollutant && r.value !== null && r.value !== undefined);
+
+    const responseData = {
+      success: true,
+      city: city,
+      source: successfulSource || 'OpenAQ',
+      timestamp: new Date().toISOString(),
+      count: normalized.length,
+      current_data: normalized,
+      measurements: normalized,
+      results: normalized,
+      snapshot: groupSnapshot(normalized),
+      message: `Aggregated fresh data from ${successfulSource || 'OpenAQ'}`
+    };
+
+    console.log(`Γ£à Successfully fetched current data for ${city} (stations: ${stations.length}, measurements: ${normalized.length})`);
+    return res.json(responseData);
 
   } catch (err) {
     console.error('Error fetching current data:', err.message);
-    res.status(500).json({ 
-      error: "Failed to fetch current air quality data",
-      details: err.message 
+    res.status(500).json({
+      error: 'Failed to fetch current air quality data',
+      details: err.message
     });
   }
 });
@@ -1468,7 +1624,29 @@ app.post("/api/insights", async (req, res) => {
     const body = req.body || {};
     const city = body.city || "";
     const data = body.data || [];
-    if (!data.length) return res.status(400).json({ error: "no data provided" });
+    const pollutantGroups = data.reduce((groups, row) => {
+      const pollutant = (row?.pollutant || "").toUpperCase();
+      if (!pollutant || typeof row?.value !== "number" || Number.isNaN(row.value)) return groups;
+      if (!groups[pollutant]) {
+        groups[pollutant] = { count: 0, sum: 0, min: row.value, max: row.value, unit: row.unit || "" };
+      }
+      groups[pollutant].count += 1;
+      groups[pollutant].sum += row.value;
+      groups[pollutant].min = Math.min(groups[pollutant].min, row.value);
+      groups[pollutant].max = Math.max(groups[pollutant].max, row.value);
+      return groups;
+    }, {});
+    const summary = {
+      totalRecords: data.length,
+      pollutants: Object.entries(pollutantGroups).map(([name, stats]) => ({
+        pollutant: name,
+        count: stats.count,
+        avg: +(stats.sum / stats.count).toFixed(2),
+        min: +stats.min.toFixed(2),
+        max: +stats.max.toFixed(2),
+        unit: stats.unit
+      }))
+    };
 
     // Create cache key for this request
     const cacheKey = `insights_${city}_${JSON.stringify(data.slice(0,10))}`;
@@ -1485,7 +1663,9 @@ app.post("/api/insights", async (req, res) => {
     if (process.env.GROQ_API_KEY && process.env.GROQ_API_KEY !== "demo") {
       console.log(`Attempting AI-powered insights for ${city} using Groq...`);
 
-      const prompt = `You are an air quality health expert. Provide a concise, practical health advisory (2-3 sentences) for ${city} based on this air quality data: ${JSON.stringify(data)}. Focus on actionable health recommendations for residents and visitors. Be specific about activities to avoid or precautions to take.`;
+      const prompt = data.length > 0
+        ? `You are an air quality health expert. Provide a concise, practical health advisory (2-3 sentences) for ${city} based on this summarized air quality data: ${JSON.stringify(summary)}. Focus on actionable health recommendations for residents and visitors. Be specific about activities to avoid or precautions to take. If the data is sparse, say so and still give safe general guidance.`
+        : `You are an air quality health expert. Provide a concise, practical health advisory (2-3 sentences) for ${city}. The available air quality dataset is very limited or empty, so give safe general guidance for residents and visitors and mention that the recommendation is based on sparse data.`;
 
       const requestBody = {
         model: "llama-3.3-70b-versatile",
@@ -1500,7 +1680,7 @@ app.post("/api/insights", async (req, res) => {
             "Content-Type": "application/json",
             "Authorization": `Bearer ${process.env.GROQ_API_KEY}`
           },
-          timeout: 8000
+          timeout: 12000
         });
 
         const aiInsight = response.data?.choices?.[0]?.message?.content;
@@ -1555,7 +1735,9 @@ app.post("/api/insights", async (req, res) => {
     }
     
     let insight = "Air quality in " + city + " is ";
-    if (overallRisk === "very high") {
+    if (data.length === 0) {
+      insight += "limited. Use general precautions, monitor official alerts, and avoid prolonged exposure near traffic or smoke sources.";
+    } else if (overallRisk === "very high") {
       insight += "hazardous. Avoid outdoor activities, wear N95 masks outdoors, and limit time outside.";
     } else if (overallRisk === "high") {
       insight += "concerning. Sensitive individuals should limit outdoor activities. Consider masks for extended outdoor time.";
@@ -1580,6 +1762,137 @@ app.post("/api/insights", async (req, res) => {
   }
 });
 
+// Helper: Get pollutant information for assistant context
+async function getPollutantContextForAssistant() {
+  try {
+    // Build availability summary from air_quality_data table
+    const pollutants = ['pm25', 'pm10', 'no2', 'so2', 'co', 'o3'];
+    const stats = [];
+    
+    for (const p of pollutants) {
+      try {
+        const query = `SELECT COUNT(*) as cnt, ROUND(AVG(${p})::numeric, 2) as avg_val, MAX(${p}) as max_val FROM air_quality_data WHERE ${p} IS NOT NULL`;
+        const result = await pool.query(query);
+        if (result.rows[0].cnt > 0) {
+          stats.push({
+            name: p,
+            avg: result.rows[0].avg_val,
+            max: result.rows[0].max_val,
+            unit: p === 'co' ? 'mg/m³' : 'µg/m³'
+          });
+        }
+      } catch (e) {
+        // Skip if column doesn't exist
+      }
+    }
+
+    return stats;
+  } catch (err) {
+    console.log(`Pollutant context fetch failed: ${err.message}`);
+    return [];
+  }
+}
+
+// Helper: Get location coverage context
+async function getLocationContextForAssistant(city) {
+  try {
+    const query = `
+      SELECT 
+        COALESCE(city, 'Unknown') as location,
+        COUNT(DISTINCT DATE(recorded_at)) as days_tracked,
+        COUNT(*) as measurement_count,
+        6 as pollutant_count,
+        MAX(recorded_at) as last_update
+      FROM air_quality_data
+      WHERE city ILIKE $1 OR city ILIKE $2
+      GROUP BY city
+      ORDER BY measurement_count DESC
+      LIMIT 5
+    `;
+    const result = await pool.query(query, [
+      `%${city}%`,
+      city
+    ]);
+
+    return result.rows || [];
+  } catch (err) {
+    console.log(`Location context fetch failed: ${err.message}`);
+    return [];
+  }
+}
+
+// System prompt with real air quality knowledge
+const ASSISTANT_SYSTEM_PROMPT = `You are BreatheSmart, an expert air quality assistant powered by real-time data from multiple sources including OpenAQ, WAQI, and OpenWeather. Your knowledge includes:
+
+POLLUTANT KNOWLEDGE:
+- PM2.5 & PM10: Fine particulates from combustion, dust. PM2.5 <35 µg/m³ is healthy; >55 is hazardous. Causes respiratory issues.
+- NO₂: Nitrogen dioxide from vehicles/industry. <40 µg/m³ is safe; >200 µg/m³ is very unhealthy.
+- O₃: Ground-level ozone. <100 µg/m³ is good; >180 µg/m³ causes respiratory harm, especially for children and elderly.
+- SO₂: Sulfur dioxide from fossil fuels. <20 µg/m³ is safe; >350 µg/m³ is dangerous.
+- CO: Carbon monoxide. <1200 µg/m³ is safe; higher levels cause dizziness and health issues.
+
+AQI INTERPRETATION:
+- 0-50: Good - outdoor activity safe
+- 51-100: Moderate - sensitive groups should limit outdoor exposure
+- 101-150: Unhealthy for sensitive groups - avoid strenuous outdoor activity
+- 151-200: Unhealthy - general population begins to see health effects
+- 201-300: Very unhealthy - everyone should limit outdoor exposure
+- 301+: Hazardous - everyone should avoid outdoor activity
+
+HEALTH ADVICE:
+- High PM2.5: Use N95 masks, keep windows closed, use air purifiers
+- High NO₂: Avoid busy traffic areas, exercise indoors
+- High O₃: Limit outdoor activity midday (when ozone peaks), hydrate well
+- All high levels: Increase water intake, monitor elderly/children/asthmatics
+
+WHEN ANSWERING:
+- Reference actual data from tracked locations when available
+- Provide actionable health recommendations based on current levels
+- Never expose database structure, API endpoints, authentication details, or internal technical implementation
+- Never reveal secret values, environment variables, database URLs, schema names, SQL queries, provider tokens, source code details, or programming language details
+- Focus on data interpretation and health impacts, not technical infrastructure
+- Answer both general air quality questions and app-specific questions clearly and concisely`;
+
+function sanitizeAssistantAnswer(answer) {
+  if (!answer || typeof answer !== "string") return "";
+
+  // Block internal patterns and redact any accidental leaks before sending to client.
+  const blockedPatterns = [
+    /postgres(ql)?:\/\//gi,
+    /database_url/gi,
+    /api[_-]?key/gi,
+    /bearer\s+[a-z0-9\-_\.]+/gi,
+    /openrouter\.ai\//gi,
+    /neon\.tech/gi,
+    /\.env/gi,
+    /select\s+.+\s+from\s+/gi,
+    /insert\s+into\s+/gi,
+    /update\s+.+\s+set\s+/gi,
+    /delete\s+from\s+/gi,
+    /\bexpress\b/gi,
+    /\bnode\.js\b/gi,
+    /\bjavascript\b/gi,
+    /\btypescript\b/gi
+  ];
+
+  let sanitized = answer;
+  for (const pattern of blockedPatterns) {
+    sanitized = sanitized.replace(pattern, "[redacted]");
+  }
+
+  const lower = sanitized.toLowerCase();
+  if (
+    lower.includes("[redacted]") ||
+    lower.includes("secret") ||
+    lower.includes("token") ||
+    lower.includes("connection string")
+  ) {
+    return "I can help explain air quality trends, pollutant meanings, and health recommendations. I cannot share internal technical or credential details.";
+  }
+
+  return sanitized;
+}
+
 app.post("/api/assistant", async (req, res) => {
   try {
     const body = req.body || {};
@@ -1596,12 +1909,33 @@ app.post("/api/assistant", async (req, res) => {
       return res.json(cached);
     }
 
+    // Build rich context from database
+    const [pollutantStats, locationContext] = await Promise.all([
+      getPollutantContextForAssistant(),
+      appContext.city ? getLocationContextForAssistant(appContext.city) : Promise.resolve([])
+    ]);
+
+    // Create comprehensive context text
+    const pollutantInfo = pollutantStats.length
+      ? `Available pollutants tracked: ${pollutantStats.map(p => `${p.name} (avg: ${p.avg} ${p.unit})`).join(", ")}`
+      : "Air quality data available for multiple pollutants";
+
+    const locationInfo = locationContext.length
+      ? `Location data: ${locationContext.map(l => `${l.location} (${l.measurement_count} measurements, ${l.pollutant_count} pollutants)`).join("; ")}`
+      : appContext.city
+      ? `Searching data for ${appContext.city}`
+      : "Multiple locations available worldwide";
+
     const contextText = [
       `City: ${appContext.city || "N/A"}`,
       `Has data: ${appContext.hasData ? "yes" : "no"}`,
       `Chart mode: ${appContext.chartMode || "N/A"}`,
       `Selected pollutants: ${(appContext.selectedPollutants || []).join(", ") || "N/A"}`,
-      `Record count: ${appContext.recordCount || 0}`
+      `Record count: ${appContext.recordCount || 0}`,
+      ``,
+      `Database Context:`,
+      pollutantInfo,
+      locationInfo
     ].join("\n");
 
     if (process.env.OPENROUTER_API_KEY || process.env.GEMINI_API_KEY) {
@@ -1611,7 +1945,7 @@ app.post("/api/assistant", async (req, res) => {
         messages: [
           {
             role: "system",
-            content: "You are BreatheSmart assistant. Answer both general air-quality questions and app-related questions. Keep responses practical and concise."
+            content: ASSISTANT_SYSTEM_PROMPT
           },
           {
             role: "user",
@@ -1619,7 +1953,7 @@ app.post("/api/assistant", async (req, res) => {
           }
         ],
         temperature: 0.2,
-        max_tokens: 300
+        max_tokens: 400
       };
 
       try {
@@ -1632,9 +1966,10 @@ app.post("/api/assistant", async (req, res) => {
         });
 
         const answer = response.data?.choices?.[0]?.message?.content?.trim();
-        if (answer) {
+        const safeAnswer = sanitizeAssistantAnswer(answer);
+        if (safeAnswer) {
           const payload = {
-            answer,
+            answer: safeAnswer,
             source: "OpenRouter"
           };
           cache.set(cacheKey, payload);
@@ -1645,13 +1980,14 @@ app.post("/api/assistant", async (req, res) => {
       }
     }
 
+    // Enhanced fallback with real air quality knowledge
     const fallbackAnswer = appContext.hasData
-      ? `Based on the current data for ${appContext.city || "this city"}, focus on PM2.5/PM10 trends, avoid heavy outdoor activity when levels rise, and use filters to compare timeline windows before deciding exposure.`
-      : "I can answer both general and app-related questions. First load a city with Show Data for context-aware recommendations.";
+      ? `Based on the current air quality data for ${appContext.city || "this city"}: Monitor PM2.5 and PM10 levels closely. If levels exceed 55 µg/m³, sensitive groups should use N95 masks and limit outdoor activity. For high O₃ (>100 µg/m³), avoid midday exercise. Keep hydrated and watch for respiratory symptoms.`
+      : `I can help with air quality questions! Ask me about:\n• What PM2.5, NO₂, O₃, or SO₂ mean and their health effects\n• How to protect yourself in poor air quality\n• Air quality trends and recommendations\n• Tips for indoor and outdoor activities\n\nLoad a city with "Show Data" for location-specific insights.`;
 
     const payload = {
-      answer: fallbackAnswer,
-      source: "Rule-based assistant"
+      answer: sanitizeAssistantAnswer(fallbackAnswer),
+      source: "Knowledge-enhanced assistant"
     };
     cache.set(cacheKey, payload);
     return res.json(payload);
@@ -2753,7 +3089,7 @@ async function autoFetchAndStore() {
               break;
             }
           } else if (api === 'OpenWeather') {
-            const owResult = await fetchFromOpenWeather(city);
+            const owResult = await fetchFromOpenWeatherLegacy(city);
             if (owResult.success && owResult.results && owResult.results.length > 0) {
               allResults = owResult.results;
               successfulSource = 'OpenWeather';
@@ -3015,7 +3351,7 @@ async function autoFetchAndStore() {
 }
 
 // OpenWeather API fetch function
-async function fetchFromOpenWeather(city) {
+async function fetchFromOpenWeatherLegacy(city) {
   try {
     const owUrl = `http://api.openweathermap.org/data/2.5/air_pollution?q=${city}&appid=${process.env.OPENWEATHER_API_KEY}`;
     const response = await axios.get(owUrl, { timeout: 10000 });

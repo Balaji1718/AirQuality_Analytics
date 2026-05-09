@@ -1,4 +1,4 @@
-body { font-family: Arial, Helvetica, sans-serif; margin: 0; background: transparent; color: #111; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif; margin: 0; background: transparent; color: #111; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
 
 /* Scrolling animation for live monitoring cities */
 @keyframes scroll-left {
@@ -182,6 +182,7 @@ body { font-family: Arial, Helvetica, sans-serif; margin: 0; background: transpa
   background: #f8fafc;
   border: 1px solid #e5e7eb;
   box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
 }
 
 .assistant-message.user .assistant-message-bubble {
@@ -191,17 +192,57 @@ body { font-family: Arial, Helvetica, sans-serif; margin: 0; background: transpa
 }
 
 .assistant-message-source {
-  font-size: 11px;
-  font-weight: 700;
-  margin-bottom: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 6px;
   color: inherit;
-  opacity: 0.8;
+  opacity: 0.85;
+  letter-spacing: 0.2px;
 }
 
 .assistant-message-content {
   font-size: 14px;
-  line-height: 1.5;
-  white-space: pre-wrap;
+  line-height: 1.6;
+  white-space: normal;
+  word-wrap: break-word;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+  font-weight: 400;
+  letter-spacing: 0.3px;
+}
+
+.assistant-message-content p {
+  margin: 8px 0;
+  line-height: 1.6;
+}
+
+.assistant-message-content strong {
+  font-weight: 600;
+  color: inherit;
+}
+
+.assistant-message-content em {
+  font-style: italic;
+}
+
+.assistant-message-content ul,
+.assistant-message-content ol {
+  margin: 10px 0;
+  padding-left: 20px;
+}
+
+.assistant-message-content li {
+  margin-bottom: 6px;
+  line-height: 1.6;
+}
+
+.assistant-message-content h1,
+.assistant-message-content h2,
+.assistant-message-content h3,
+.assistant-message-content h4,
+.assistant-message-content h5 {
+  margin: 12px 0 6px 0;
+  font-weight: 600;
+  line-height: 1.4;
 }
 
 .assistant-loading {
