@@ -11,6 +11,8 @@ const { testConnection, initializeTables, storeAirQualityData, pool } = require(
 // Normalization helpers
 const { normalizePollutant, coerceNumber, normalizeLocation } = require('./utils/normalize');
 const { buildSourceComparison } = require('./utils/locationCoverage');
+// Hierarchy API router (isolated, feature-safe)
+const hierarchyRouter = require('./hierarchy');
 
 // Load global countries database (193 UN member states)
 let globalCountriesDatabase = [];
@@ -197,7 +199,6 @@ function getLocationCountryName(loc) {
 
 function findCountryByQuery(query = "") {
   const normalized = normalizeSearchText(query);
-  console.log(`[DEBUG] findCountryByQuery input="${query}" normalized="${normalized}"`);
   if (!normalized) return null;
 
   const aliases = {
@@ -219,10 +220,7 @@ function findCountryByQuery(query = "") {
   const aliasMatch = aliases[normalized.replace(/\s+/g, '')] || aliases[normalized];
   if (aliasMatch) {
     const country = globalCountriesDatabase.find(c => normalizeSearchText(c.name) === normalizeSearchText(aliasMatch));
-    if (country) {
-      console.log(`[DEBUG] findCountryByQuery aliasMatch="${aliasMatch}" -> matched country="${country.name}"`);
-      return country;
-    }
+    if (country) return country;
   }
 
   let exact = globalCountriesDatabase.find(c =>
@@ -232,22 +230,15 @@ function findCountryByQuery(query = "") {
   );
   if (exact) return exact;
 
-  if (exact) console.log(`[DEBUG] findCountryByQuery exact match -> ${exact.name}`);
 
   exact = globalCountriesDatabase.find(c => normalizeSearchText(c.name).includes(normalized));
-  if (exact) {
-    console.log(`[DEBUG] findCountryByQuery partial match -> ${exact.name}`);
-  } else {
-    console.log(`[DEBUG] findCountryByQuery no match for "${query}"`);
-  }
+  // silent on partial/no match
   return exact || null;
 }
 
 function buildHierarchicalSearchContext(rawQuery = "") {
   const query = (rawQuery || '').trim();
   const country = findCountryByQuery(query);
-
-  console.log(`[DEBUG] buildHierarchicalSearchContext input="${rawQuery}" normalized="${normalizeSearchText(rawQuery)}" countryResolved="${country ? country.name : 'null'}"`);
 
   if (country) {
     const regionalData = regionalCoverageMap[country.name] || null;
@@ -268,8 +259,6 @@ function buildHierarchicalSearchContext(rawQuery = "") {
     const apiQueries = preferredRegions.length > 0
       ? preferredRegions.map(region => `${region}, ${country.name}`)
       : [country.name];
-
-    console.log(`[DEBUG] buildHierarchicalSearchContext country="${country.name}" preferredRegions=${JSON.stringify(preferredRegions.slice(0,8))} apiQueries=${JSON.stringify(apiQueries.slice(0,8))}`);
 
     return {
       query,
@@ -2691,8 +2680,12 @@ app.post("/api/hybrid-measurements", async (req, res) => {
 
     // 4. Return results or error
     if (results.length === 0) {
-      return res.status(404).json({ 
-        error: `No air quality data found for "${cityName}" from any source`,
+      // Return a friendly empty state that the frontend can handle gracefully.
+      const fallbackMessage = `No air quality data available for \"${cityName}\" from OpenAQ, WAQI, or OpenWeather.`;
+      return res.json({
+        empty: true,
+        message: fallbackMessage,
+        fallbackMessage: fallbackMessage,
         attemptedSources: ['OpenAQ', 'WAQI', 'OpenWeather'],
         errors: allErrors,
         resolvedLocation: searchContext?.displayLabel || cityName,
@@ -2701,7 +2694,7 @@ app.post("/api/hybrid-measurements", async (req, res) => {
           country: searchContext?.country?.name || null,
           regionCandidates: searchContext?.regionCandidates || []
         },
-        suggestion: "Try a different city name or check if the city has monitoring stations"
+        suggestion: "Try a nearby major city, the country name, or check back later when more stations are available."
       });
     }
 
@@ -3203,26 +3196,6 @@ app.get("/api/india-summary", async (req, res) => {
     res.status(500).json({ error: "Failed to fetch India summary" });
   }
 });
-
-// Temporary debug endpoint to resolve country names for tracing
-app.get('/api/debug/resolve-country', async (req, res) => {
-  try {
-    const q = (req.query.q || '').toString();
-    if (!q) return res.status(400).json({ error: 'q query param required' });
-    const country = findCountryByQuery(q);
-    const searchContext = buildHierarchicalSearchContext(q);
-    return res.json({
-      query: q,
-      normalized: normalizeSearchText(q),
-      country: country ? { name: country.name, iso2: country.iso2, iso3: country.iso3 } : null,
-      searchContext
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-
 
 // Serve React app
 const buildPath = path.resolve(__dirname, "../client/build");
@@ -3978,6 +3951,10 @@ async function startServer() {
     } else {
       console.log('ΓÜá∩╕Å Database connection failed, but server will continue without DB features');
     }
+
+    // Mount isolated hierarchy API router (feature-safe, does not affect existing endpoints)
+    app.use('/api/hierarchy', hierarchyRouter);
+    console.log('✅ Hierarchy API routes mounted at /api/hierarchy/*');
     
     // Start the server
     app.listen(PORT, () => {

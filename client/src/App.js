@@ -11,6 +11,9 @@ const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || "http://localhost:500
 const apiClient = axios.create({
   baseURL: API_BASE_URL
 });
+const ENABLE_HIERARCHY_COUNTRY_DROPDOWN = process.env.REACT_APP_ENABLE_HIERARCHY_COUNTRY !== "false";
+const ENABLE_HIERARCHY_STATE_DROPDOWN = ENABLE_HIERARCHY_COUNTRY_DROPDOWN && process.env.REACT_APP_ENABLE_HIERARCHY_STATE !== "false";
+const ENABLE_HIERARCHY_CITY_DROPDOWN = ENABLE_HIERARCHY_STATE_DROPDOWN && process.env.REACT_APP_ENABLE_HIERARCHY_CITY !== "false";
 
 function groupSnapshot(results) {
   if (!results || !Array.isArray(results) || results.length === 0) {
@@ -322,11 +325,29 @@ function App() {
   const [fromHour, setFromHour] = useState("");
   const [toHour, setToHour] = useState("");
   const [data, setData] = useState(null);
+  const [notice, setNotice] = useState("");
   const [chartMode, setChartMode] = useState("snapshot");
   const [advice, setAdvice] = useState(null);
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [globalCountries, setGlobalCountries] = useState([]);
+  const [hierarchyCountries, setHierarchyCountries] = useState([]);
+  const [selectedHierarchyCountry, setSelectedHierarchyCountry] = useState("");
+  const [hierarchyCountriesLoading, setHierarchyCountriesLoading] = useState(false);
+  const [hierarchyCountriesError, setHierarchyCountriesError] = useState("");
+  const [hierarchyStates, setHierarchyStates] = useState([]);
+  const [selectedHierarchyState, setSelectedHierarchyState] = useState("");
+  const [hierarchyStatesLoading, setHierarchyStatesLoading] = useState(false);
+  const [hierarchyStatesError, setHierarchyStatesError] = useState("");
+  const [hierarchyCities, setHierarchyCities] = useState([]);
+  const [selectedHierarchyCity, setSelectedHierarchyCity] = useState("");
+  const [hierarchyCitiesLoading, setHierarchyCitiesLoading] = useState(false);
+  const [hierarchyCitiesError, setHierarchyCitiesError] = useState("");
+  const [hierarchyTelemetry, setHierarchyTelemetry] = useState({
+    countries: { success: 0, failure: 0 },
+    states: { success: 0, failure: 0 },
+    cities: { success: 0, failure: 0 }
+  });
   const [statusBanners, setStatusBanners] = useState({ historical: null, liveMonitoring: null });
   const [assistantOpen, setAssistantOpen] = useState(false);
   const [assistantInput, setAssistantInput] = useState("");
@@ -400,9 +421,135 @@ function App() {
     loadCountries();
   }, []);
 
+  React.useEffect(() => {
+    const loadHierarchyCountries = async () => {
+      if (!ENABLE_HIERARCHY_COUNTRY_DROPDOWN) {
+        return;
+      }
+
+      try {
+        setHierarchyCountriesLoading(true);
+        setHierarchyCountriesError("");
+        const response = await apiClient.get("/api/hierarchy/countries", {
+          params: {
+            limit: 1000,
+            offset: 0
+          }
+        });
+
+        const countries = Array.isArray(response.data?.countries) ? response.data.countries : [];
+        const names = Array.from(new Set(countries
+          .map(country => (typeof country === "string" ? country : country?.name))
+          .filter(Boolean)))
+          .sort((a, b) => a.localeCompare(b));
+        setHierarchyCountries(names);
+      } catch (err) {
+        console.error("Failed to load hierarchy countries:", err);
+        setHierarchyCountries([]);
+        setHierarchyCountriesError("Hierarchy countries are temporarily unavailable. Manual search remains active.");
+      } finally {
+        setHierarchyCountriesLoading(false);
+      }
+    };
+
+    loadHierarchyCountries();
+  }, []);
+
+  React.useEffect(() => {
+    const loadHierarchyStates = async () => {
+      if (!ENABLE_HIERARCHY_STATE_DROPDOWN) {
+        return;
+      }
+
+      if (!selectedHierarchyCountry) {
+        setHierarchyStates([]);
+        setSelectedHierarchyState("");
+        setHierarchyStatesError("");
+        return;
+      }
+
+      try {
+        setHierarchyStatesLoading(true);
+        setHierarchyStatesError("");
+        const response = await apiClient.get(`/api/hierarchy/countries/${encodeURIComponent(selectedHierarchyCountry)}/states`, {
+          params: {
+            limit: 1000,
+            offset: 0
+          }
+        });
+
+        const states = Array.isArray(response.data?.states) ? response.data.states : [];
+        const names = Array.from(new Set(states
+          .map(state => (typeof state === "string" ? state : state?.name))
+          .filter(Boolean)))
+          .sort((a, b) => a.localeCompare(b));
+
+        setHierarchyStates(names);
+        setHierarchyTelemetry(prev => ({ ...prev, states: { ...prev.states, success: prev.states.success + 1 } }));
+        setSelectedHierarchyState("");
+      } catch (err) {
+        console.error("Failed to load hierarchy states:", err);
+        setHierarchyStates([]);
+        setSelectedHierarchyState("");
+        setHierarchyStatesError("State options are temporarily unavailable. Manual search remains active.");
+        setHierarchyTelemetry(prev => ({ ...prev, states: { ...prev.states, failure: prev.states.failure + 1 } }));
+      } finally {
+        setHierarchyStatesLoading(false);
+      }
+    };
+
+    loadHierarchyStates();
+  }, [selectedHierarchyCountry]);
+
+  // Log telemetry updates (non-invasive) so we can observe load success/failure counts.
+  React.useEffect(() => {
+    console.debug('Hierarchy telemetry update:', hierarchyTelemetry);
+  }, [hierarchyTelemetry]);
+
+  React.useEffect(() => {
+    const loadHierarchyCities = async () => {
+      if (!ENABLE_HIERARCHY_CITY_DROPDOWN) return;
+
+      if (!selectedHierarchyCountry || !selectedHierarchyState) {
+        setHierarchyCities([]);
+        setSelectedHierarchyCity("");
+        setHierarchyCitiesError("");
+        return;
+      }
+
+      try {
+        setHierarchyCitiesLoading(true);
+        setHierarchyCitiesError("");
+        const response = await apiClient.get(`/api/hierarchy/countries/${encodeURIComponent(selectedHierarchyCountry)}/states/${encodeURIComponent(selectedHierarchyState)}/cities`, {
+          params: { limit: 2000, offset: 0 }
+        });
+
+        const cities = Array.isArray(response.data?.cities) ? response.data.cities : [];
+        const names = Array.from(new Set(cities
+          .map(c => (typeof c === "string" ? c : c?.name))
+          .filter(Boolean))).sort((a, b) => a.localeCompare(b));
+
+        setHierarchyCities(names);
+        setSelectedHierarchyCity("");
+        setHierarchyTelemetry(prev => ({ ...prev, cities: { ...prev.cities, success: prev.cities.success + 1 } }));
+      } catch (err) {
+        console.error("Failed to load hierarchy cities:", err);
+        setHierarchyCities([]);
+        setSelectedHierarchyCity("");
+        setHierarchyCitiesError("City options are temporarily unavailable. Manual search remains active.");
+        setHierarchyTelemetry(prev => ({ ...prev, cities: { ...prev.cities, failure: prev.cities.failure + 1 } }));
+      } finally {
+        setHierarchyCitiesLoading(false);
+      }
+    };
+
+    loadHierarchyCities();
+  }, [selectedHierarchyState, selectedHierarchyCountry]);
+
   const handleShow = async () => {
     try {
       setError("");
+      setNotice("");
       setAdvice(null);
       setData(null);
       setIsLoading(true);
@@ -540,6 +687,35 @@ function App() {
         return;
       }
 
+      if (payload.empty) {
+        const emptyResults = Array.isArray(payload.results) ? payload.results : [];
+        const emptySnapshot = Array.isArray(payload.snapshot) ? payload.snapshot : [];
+        setNotice(payload.fallbackMessage || payload.message || "No air quality data available for the selected location.");
+        setData({
+          city: payload.city,
+          resolvedLocation: payload.resolvedLocation || payload.city,
+          searchContext: payload.searchContext || null,
+          empty: true,
+          emptyMessage: payload.fallbackMessage || payload.message || "No air quality data available.",
+          snapshot: emptySnapshot,
+          measurements: emptyResults,
+          results: emptyResults,
+          from: payload.from,
+          to: payload.to,
+          apiInfo: payload.apiInfo || null,
+          totalResults: 0,
+          validResults: 0
+        });
+        setAdvice({
+          text: payload.suggestion || "Try a nearby major city, the country name, or check back later when more stations are available.",
+          source: "Fallback Advisory",
+          isAI: false
+        });
+        setChartMode("snapshot");
+        setIsLoading(false);
+        return;
+      }
+
       if (!payload.results || !Array.isArray(payload.results) || payload.results.length === 0) {
         setError("No air quality measurements found for the specified location and time range. Try a country, region/state, or local area.");
         setIsLoading(false);
@@ -573,6 +749,7 @@ function App() {
         city: payload.city,
         resolvedLocation: payload.resolvedLocation || payload.city,
         searchContext: payload.searchContext || null,
+        empty: false,
         snapshot, 
         measurements: validResults,
         results: validResults, // Add results for chart compatibility
@@ -610,6 +787,7 @@ function App() {
       setIsLoading(false);
     } catch (err) {
       setError(err.response?.data?.error || "Failed to fetch data");
+      setNotice("");
       setIsLoading(false);
     }
   };
@@ -838,12 +1016,85 @@ function App() {
 
   const countryOptions = Array.from(new Set(globalCountries.map(country => country.name))).sort((a, b) => a.localeCompare(b));
 
+  const handleHierarchyCountryChange = event => {
+    const nextCountry = event.target.value;
+    setSelectedHierarchyCountry(nextCountry);
+    setSelectedHierarchyState("");
+    setHierarchyStates([]);
+    setHierarchyStatesError("");
+    // telemetry for country load triggered from initial load effect
+    setHierarchyTelemetry(prev => ({ ...prev, countries: { ...prev.countries, success: prev.countries.success } }));
+
+    // Keep the selector optional: only copy into manual input when explicitly selected.
+    if (nextCountry) {
+      setCity(nextCountry);
+    }
+  };
+
+  const handleHierarchyStateChange = event => {
+    const nextState = event.target.value;
+    setSelectedHierarchyState(nextState);
+
+    // Keep the selector optional: only copy into manual input when explicitly selected.
+    if (nextState) {
+      setCity(selectedHierarchyCountry ? `${nextState}, ${selectedHierarchyCountry}` : nextState);
+    }
+  };
+
+  const handleHierarchyCityChange = event => {
+    const nextCity = event.target.value;
+    setSelectedHierarchyCity(nextCity);
+
+    if (nextCity) {
+      setCity(selectedHierarchyCountry && selectedHierarchyState ? `${nextCity}, ${selectedHierarchyState}, ${selectedHierarchyCountry}` : nextCity);
+    }
+  };
+
   return (
     <div className="main-container">
       {/* Header Section - Centered title and search */}
       <div className="header-section">
         <h1 className="main-title">Air Quality Analytics</h1>
         <div className="search-bar">
+          {ENABLE_HIERARCHY_COUNTRY_DROPDOWN && (
+            <select
+              className="hierarchy-country-select"
+              value={selectedHierarchyCountry}
+              onChange={handleHierarchyCountryChange}
+              disabled={hierarchyCountriesLoading}
+            >
+              <option value="">Select supported country (optional)</option>
+              {hierarchyCountries.map(countryName => (
+                <option key={countryName} value={countryName}>{countryName}</option>
+              ))}
+            </select>
+          )}
+          {ENABLE_HIERARCHY_STATE_DROPDOWN && (
+            <select
+              className="hierarchy-state-select"
+              value={selectedHierarchyState}
+              onChange={handleHierarchyStateChange}
+              disabled={!selectedHierarchyCountry || hierarchyStatesLoading}
+            >
+              <option value="">Select state/region (optional)</option>
+              {hierarchyStates.map(stateName => (
+                <option key={stateName} value={stateName}>{stateName}</option>
+              ))}
+            </select>
+          )}
+          {ENABLE_HIERARCHY_CITY_DROPDOWN && (
+            <select
+              className="hierarchy-city-select"
+              value={selectedHierarchyCity}
+              onChange={handleHierarchyCityChange}
+              disabled={!selectedHierarchyState || hierarchyCitiesLoading}
+            >
+              <option value="">Select city (optional)</option>
+              {hierarchyCities.map(cityName => (
+                <option key={cityName} value={cityName}>{cityName}</option>
+              ))}
+            </select>
+          )}
           <input 
             placeholder="Enter city or country (e.g. Delhi, India)" 
             value={city} 
@@ -870,6 +1121,27 @@ function App() {
             ))}
           </datalist>
         </div>
+        {ENABLE_HIERARCHY_COUNTRY_DROPDOWN && (
+          <div style={{ marginTop: "8px", fontSize: "12px", color: "#64748b" }}>
+            {hierarchyCountriesLoading
+              ? "Loading supported countries from hierarchy API..."
+              : hierarchyCountriesError || `Hierarchy countries loaded: ${hierarchyCountries.length}.`}
+          </div>
+        )}
+        {ENABLE_HIERARCHY_STATE_DROPDOWN && selectedHierarchyCountry && (
+          <div style={{ marginTop: "4px", fontSize: "12px", color: "#64748b" }}>
+            {hierarchyStatesLoading
+              ? `Loading states for ${selectedHierarchyCountry}...`
+              : hierarchyStatesError || `States loaded for ${selectedHierarchyCountry}: ${hierarchyStates.length}.`}
+          </div>
+        )}
+        {ENABLE_HIERARCHY_CITY_DROPDOWN && selectedHierarchyState && (
+          <div style={{ marginTop: "4px", fontSize: "12px", color: "#64748b" }}>
+            {hierarchyCitiesLoading
+              ? `Loading cities for ${selectedHierarchyState}...`
+              : hierarchyCitiesError || `Cities loaded for ${selectedHierarchyState}: ${hierarchyCities.length}.`}
+          </div>
+        )}
         {globalCountries.length > 0 && (
           <div style={{ marginTop: "8px", fontSize: "12px", color: "#64748b" }}>
             Global country list loaded: {globalCountries.length} countries.
@@ -1092,7 +1364,7 @@ function App() {
             </div>
           )}
 
-          {!data && !isLoading && <p style={{ color: "gray" }}>No data yet. Enter a city and click Show Data.</p>}
+          {!data && !isLoading && <p style={{ color: "gray" }}>No data yet. Enter a city or country and click Show Data.</p>}
 
           {data && !isLoading && (
             <div className="pollutant-card-scroll fade-in">
@@ -1137,6 +1409,11 @@ function App() {
           {data && (
             <div style={{ marginTop: "16px", padding: "12px", backgroundColor: "#f0f8ff", borderRadius: "5px" }}>
               <strong>Location:</strong> {data.resolvedLocation || data.measurements?.[0]?.location || data.city || "Unknown Location"}
+              {data.empty && data.emptyMessage && (
+                <div style={{ fontSize: "12px", color: "#8a5d00", marginTop: "6px" }}>
+                  {data.emptyMessage}
+                </div>
+              )}
               {data.searchContext?.level && (
                 <div style={{ fontSize: "12px", color: "#666", marginTop: "4px" }}>
                   Search level: {data.searchContext.level}
@@ -1182,6 +1459,7 @@ function App() {
             </div>
           )}
           {error && <p className="error">{error}</p>}
+          {!error && notice && <p style={{ color: "#8a5d00", marginTop: "8px" }}>{notice}</p>}
         </div>
 
         {/* Full-width Data Table Section */}
