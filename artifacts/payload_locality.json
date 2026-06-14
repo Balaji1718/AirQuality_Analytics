@@ -1,0 +1,182 @@
+{
+  "city": "Hebbal",
+  "resolvedLocation": "Hebbal, Bengaluru, India",
+  "resolvedCoordinates": [
+    13.029152,
+    77.585901
+  ],
+  "providerLocation": "Hebbal, Bengaluru, India",
+  "stationMetadata": {
+    "stationId": 11428,
+    "stationName": "Hebbal, Bengaluru, India",
+    "coordinates": {
+      "lat": 13.029152,
+      "lon": 77.585901
+    },
+    "confidence": 1
+  },
+  "searchContext": {
+    "level": "locality",
+    "country": "India",
+    "state": "Karnataka",
+    "regionCandidates": [],
+    "matchedRegion": null,
+    "queryCandidates": [
+      "Hebbal, Bengaluru, India",
+      "Hebbal, India",
+      "Hebbal"
+    ],
+    "source": "WAQI"
+  },
+  "from": "2026-06-06T06:23:17.362Z",
+  "to": "2026-06-13T06:23:17.362Z",
+  "source": "WAQI",
+  "count": 9,
+  "snapshot": [
+    {
+      "pollutant": "co",
+      "value": 0.9,
+      "unit": "AQI"
+    },
+    {
+      "pollutant": "no2",
+      "value": 6.1,
+      "unit": "AQI"
+    },
+    {
+      "pollutant": "o3",
+      "value": 16.2,
+      "unit": "AQI"
+    },
+    {
+      "pollutant": "pm10",
+      "value": 19,
+      "unit": "AQI"
+    },
+    {
+      "pollutant": "pm25",
+      "value": 54,
+      "unit": "AQI"
+    }
+  ],
+  "localAdvice": "Air quality in Hebbal is moderate (PM2.5 elevated). Generally acceptable, but sensitive individuals should consider limiting prolonged outdoor activities.",
+  "apiInfo": {
+    "primarySource": "WAQI",
+    "adviceSource": "Rule-based",
+    "availableSources": [
+      "openaq",
+      "waqi",
+      "openweather"
+    ],
+    "note": "Data from WAQI API (current data only) ≡ƒôà, advice from Rule-based",
+    "resolution": "Resolved as locality-level query in India"
+  },
+  "stationsCount": 1,
+  "stationsSample": [
+    {
+      "stationId": 11428,
+      "resolvedLocation": "Hebbal, Bengaluru, India",
+      "coordinates": [
+        13.029152,
+        77.585901
+      ],
+      "stationMetadata": {
+        "stationId": 11428,
+        "stationName": "Hebbal, Bengaluru, India",
+        "coordinates": {
+          "lat": 13.029152,
+          "lon": 77.585901
+        },
+        "confidence": 1
+      },
+      "snapshot": [
+        {
+          "pollutant": "co",
+          "value": 0.9,
+          "unit": "AQI"
+        },
+        {
+          "pollutant": "no2",
+          "value": 6.1,
+          "unit": "AQI"
+        },
+        {
+          "pollutant": "o3",
+          "value": 16.2,
+          "unit": "AQI"
+        },
+        {
+          "pollutant": "pm10",
+          "value": 19,
+          "unit": "AQI"
+        },
+        {
+          "pollutant": "pm25",
+          "value": 54,
+          "unit": "AQI"
+        }
+      ],
+      "measurementsCount": 9
+    }
+  ],
+  "resultsSample": [
+    {
+      "pollutant": "co",
+      "parameter": "co",
+      "value": 0.9,
+      "unit": "AQI",
+      "dateUTC": "2026-06-13 11:00:00",
+      "dateLocal": "2026-06-13 11:00:00",
+      "location": "Bengaluru, India",
+      "providerLocation": "Hebbal, Bengaluru, India",
+      "stationMetadata": {
+        "stationId": 11428,
+        "stationName": "Hebbal, Bengaluru, India",
+        "coordinates": {
+          "lat": 13.029152,
+          "lon": 77.585901
+        },
+        "confidence": 1
+      },
+      "city": "Bengaluru",
+      "coordinates": [
+        13.029152,
+        77.585901
+      ],
+      "source": "WAQI",
+      "validation": {
+        "confidence": 1,
+        "method": "keyword_search"
+      }
+    },
+    {
+      "pollutant": "dew",
+      "parameter": "dew",
+      "value": 23,
+      "unit": "AQI",
+      "dateUTC": "2026-06-13 11:00:00",
+      "dateLocal": "2026-06-13 11:00:00",
+      "location": "Bengaluru, India",
+      "providerLocation": "Hebbal, Bengaluru, India",
+      "stationMetadata": {
+        "stationId": 11428,
+        "stationName": "Hebbal, Bengaluru, India",
+        "coordinates": {
+          "lat": 13.029152,
+          "lon": 77.585901
+        },
+        "confidence": 1
+      },
+      "city": "Bengaluru",
+      "coordinates": [
+        13.029152,
+        77.585901
+      ],
+      "source": "WAQI",
+      "validation": {
+        "confidence": 1,
+        "method": "keyword_search"
+      }
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+﻿function buildResolvedLocationMetadata(results, searchContext, fallbackQuery, source) {
+  const first = (results || []).find(item => item && (item.location || item.city || item.country || item.providerLocation)) || {};
+  const location = first.providerLocation || first.location || '';
+  const city = first.city || '';
+  const country = first.country || searchContext.country?.name || '';
+  const state = first.state || searchContext.state || '';
+  const coordinates = getMeasurementCoordinates(first);
+
+  const candidateLabel = normalizeLocation(
+    [first.providerLocation || location || city || searchContext.displayLabel || fallbackQuery, state, country]
+      .filter(Boolean)
+      .join(', ')
+  );
+
+  return {
+    resolvedLocation: searchContext.level === 'country'
+      ? (searchContext.displayLabel || candidateLabel || fallbackQuery)
+      : (candidateLabel || searchContext.displayLabel || fallbackQuery),
+    resolvedCoordinates: coordinates,
+    providerLocation: location || null,
+    stationMetadata: first.stationMetadata || null,
+    searchContext: {
+      level: searchContext.level,
+      country: searchContext.country?.name || country || null,
+      state: state || null,
+      regionCandidates: searchContext.regionCandidates || [],
+      matchedRegion: searchContext.matchedRegion || null,
+      queryCandidates: searchContext.apiQueries || [],
+      source: source || null,
+    },
+  };
+}

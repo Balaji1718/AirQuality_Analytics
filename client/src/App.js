@@ -316,6 +316,8 @@ function formatTick(value) {
 
 function App() {
   const [city, setCity] = useState("");
+  const [advancedFiltersOpen, setAdvancedFiltersOpen] = useState(false);
+  const [autocompleteSuggestions, setAutocompleteSuggestions] = useState([]);
   const [fromYear, setFromYear] = useState("");
   const [toYear, setToYear] = useState("");
   const [fromMonth, setFromMonth] = useState("");
@@ -420,6 +422,45 @@ function App() {
     };
     loadCountries();
   }, []);
+
+  React.useEffect(() => {
+    const trimmedCity = (city || "").trim();
+    if (trimmedCity.length < 1) {
+      setAutocompleteSuggestions([]);
+      return;
+    }
+
+    const delayDebounceFn = setTimeout(async () => {
+      try {
+        const response = await apiClient.get("/api/hierarchy/search", {
+          params: {
+            q: trimmedCity,
+            country: selectedHierarchyCountry || null,
+            state: selectedHierarchyState || null,
+            limit: 15
+          }
+        });
+        
+        const suggestionsList = (response.data?.results || []).map(item => {
+          if (item.type === 'city') {
+            return item.state && item.state !== 'General Region'
+              ? `${item.name}, ${item.state}, ${item.country}`
+              : `${item.name}, ${item.country}`;
+          }
+          if (item.type === 'state') {
+            return `${item.name}, ${item.country}`;
+          }
+          return item.name;
+        });
+        
+        setAutocompleteSuggestions(Array.from(new Set(suggestionsList)));
+      } catch (err) {
+        console.error("Autocomplete search error:", err);
+      }
+    }, 300);
+
+    return () => clearTimeout(delayDebounceFn);
+  }, [city, selectedHierarchyCountry, selectedHierarchyState]);
 
   React.useEffect(() => {
     const loadHierarchyCountries = async () => {
@@ -553,9 +594,18 @@ function App() {
       setAdvice(null);
       setData(null);
       setIsLoading(true);
-      
-      if (!city) {
-        setError("Please enter a city or country name");
+      // Build final city value using single hierarchy selection (only one choice honored)
+      let finalCity = city && city.trim() ? city.trim() : null;
+      if (selectedHierarchyCity) {
+        finalCity = selectedHierarchyCity;
+      } else if (selectedHierarchyState) {
+        finalCity = selectedHierarchyState;
+      } else if (selectedHierarchyCountry) {
+        finalCity = selectedHierarchyCountry;
+      }
+
+      if (!finalCity) {
+        setError("Please enter a city or select a location");
         setIsLoading(false);
         return;
       }
@@ -666,7 +716,10 @@ function App() {
       }
 
       const body = {
-        city: city.trim(),
+        city: finalCity,
+        // include explicit hierarchy overrides to help backend resolution
+        country: selectedHierarchyCountry || null,
+        state: selectedHierarchyState || null,
         fromYear: validFromYear,
         toYear: validToYear,
         fromMonth: validFromMonth,
@@ -691,9 +744,23 @@ function App() {
         const emptyResults = Array.isArray(payload.results) ? payload.results : [];
         const emptySnapshot = Array.isArray(payload.snapshot) ? payload.snapshot : [];
         setNotice(payload.fallbackMessage || payload.message || "No air quality data available for the selected location.");
+        // extract first available coordinates from results for map link
+        const firstCoord = (emptyResults || []).find(r => Array.isArray(r.coordinates) || (r && r.coordinates && r.coordinates.latitude)) || null;
+        let resolvedCoordinates = payload.resolvedCoordinates || null;
+        if (firstCoord) {
+          if (Array.isArray(firstCoord.coordinates)) {
+            resolvedCoordinates = { lat: firstCoord.coordinates[0], lon: firstCoord.coordinates[1] };
+          } else if (firstCoord.coordinates && firstCoord.coordinates.latitude) {
+            resolvedCoordinates = { lat: firstCoord.coordinates.latitude, lon: firstCoord.coordinates.longitude };
+          }
+        }
+
         setData({
           city: payload.city,
           resolvedLocation: payload.resolvedLocation || payload.city,
+          resolvedCoordinates,
+          providerLocation: payload.providerLocation || emptyResults[0]?.providerLocation || null,
+          stationMetadata: payload.stationMetadata || emptyResults[0]?.stationMetadata || null,
           searchContext: payload.searchContext || null,
           empty: true,
           emptyMessage: payload.fallbackMessage || payload.message || "No air quality data available.",
@@ -745,9 +812,23 @@ function App() {
         return;
       }
 
+      // try to find a representative coordinate from results
+      const firstCoordNonEmpty = (payload.results || payload.measurements || []).find(r => Array.isArray(r.coordinates) || (r && r.coordinates && r.coordinates.latitude)) || null;
+      let resolvedCoordinatesNonEmpty = payload.resolvedCoordinates || null;
+      if (firstCoordNonEmpty) {
+        if (Array.isArray(firstCoordNonEmpty.coordinates)) {
+          resolvedCoordinatesNonEmpty = { lat: firstCoordNonEmpty.coordinates[0], lon: firstCoordNonEmpty.coordinates[1] };
+        } else if (firstCoordNonEmpty.coordinates && firstCoordNonEmpty.coordinates.latitude) {
+          resolvedCoordinatesNonEmpty = { lat: firstCoordNonEmpty.coordinates.latitude, lon: firstCoordNonEmpty.coordinates.longitude };
+        }
+      }
+
       setData({ 
         city: payload.city,
         resolvedLocation: payload.resolvedLocation || payload.city,
+        resolvedCoordinates: resolvedCoordinatesNonEmpty,
+        providerLocation: payload.providerLocation || validResults[0]?.providerLocation || null,
+        stationMetadata: payload.stationMetadata || validResults[0]?.stationMetadata || null,
         searchContext: payload.searchContext || null,
         empty: false,
         snapshot, 
@@ -847,7 +928,20 @@ function App() {
   // Dynamic snapshot that updates based on current data and filters
   const snapshotSeries = data ? (() => {
     // Use the current measurements data to generate fresh snapshot
-    const currentData = data.results || data.measurements || [];
+    let currentData = data.results || data.measurements || [];
+    
+    // Filter to primary station if search level is city/locality/station to prevent station averaging
+    if (data.searchContext?.level !== 'country' && data.searchContext?.level !== 'region') {
+      const primaryStationName = data.providerLocation || data.resolvedLocation;
+      if (primaryStationName) {
+        currentData = currentData.filter(r => 
+          r.providerLocation === primaryStationName || 
+          r.location === primaryStationName ||
+          r.stationMetadata?.stationName === primaryStationName
+        );
+      }
+    }
+
     if (currentData.length === 0) return data.snapshot || [];
     
     // Recalculate snapshot from current filtered data
@@ -890,7 +984,20 @@ function App() {
     }
     
     // Use data.results for chart data (now properly available)
-    const resultsData = data.results || data.measurements || [];
+    let resultsData = data.results || data.measurements || [];
+    
+    // Filter to primary station if search level is city/locality/station to prevent station averaging
+    if (data.searchContext?.level !== 'country' && data.searchContext?.level !== 'region') {
+      const primaryStationName = data.providerLocation || data.resolvedLocation;
+      if (primaryStationName) {
+        resultsData = resultsData.filter(r => 
+          r.providerLocation === primaryStationName || 
+          r.location === primaryStationName ||
+          r.stationMetadata?.stationName === primaryStationName
+        );
+      }
+    }
+
     const buckets = bucketBy(resultsData, bucketType);
     
     console.log("Chart data processed:", { 
@@ -1015,12 +1122,31 @@ function App() {
   };
 
   const countryOptions = Array.from(new Set(globalCountries.map(country => country.name))).sort((a, b) => a.localeCompare(b));
+  const manualSearchSuggestions = (() => {
+    if (selectedHierarchyCountry && selectedHierarchyState) {
+      return Array.from(new Set(hierarchyCities.filter(Boolean))).sort((a, b) => a.localeCompare(b));
+    }
+
+    if (selectedHierarchyCountry) {
+      return Array.from(new Set([
+        selectedHierarchyCountry,
+        ...hierarchyStates.filter(Boolean)
+      ])).sort((a, b) => a.localeCompare(b));
+    }
+
+    return countryOptions;
+  })();
+
+  const displaySuggestions = city && city.trim() ? autocompleteSuggestions : manualSearchSuggestions;
 
   const handleHierarchyCountryChange = event => {
     const nextCountry = event.target.value;
     setSelectedHierarchyCountry(nextCountry);
+    // Clear state and city selections to enforce single-choice search
     setSelectedHierarchyState("");
     setHierarchyStates([]);
+    setSelectedHierarchyCity("");
+    setHierarchyCities([]);
     setHierarchyStatesError("");
     // telemetry for country load triggered from initial load effect
     setHierarchyTelemetry(prev => ({ ...prev, countries: { ...prev.countries, success: prev.countries.success } }));
@@ -1033,11 +1159,15 @@ function App() {
 
   const handleHierarchyStateChange = event => {
     const nextState = event.target.value;
+    // Set the state, clear any selected city to enforce single-choice
     setSelectedHierarchyState(nextState);
+    setSelectedHierarchyCity("");
+    setHierarchyCities([]);
 
-    // Keep the selector optional: only copy into manual input when explicitly selected.
+    // Keep the selector optional: copy into manual input when explicitly selected.
     if (nextState) {
-      setCity(selectedHierarchyCountry ? `${nextState}, ${selectedHierarchyCountry}` : nextState);
+      // Use state name as single search term (country remains for context)
+      setCity(nextState);
     }
   };
 
@@ -1046,7 +1176,7 @@ function App() {
     setSelectedHierarchyCity(nextCity);
 
     if (nextCity) {
-      setCity(selectedHierarchyCountry && selectedHierarchyState ? `${nextCity}, ${selectedHierarchyState}, ${selectedHierarchyCountry}` : nextCity);
+      setCity(nextCity);
     }
   };
 
@@ -1055,69 +1185,95 @@ function App() {
       {/* Header Section - Centered title and search */}
       <div className="header-section">
         <h1 className="main-title">Air Quality Analytics</h1>
-        <div className="search-bar">
-          {ENABLE_HIERARCHY_COUNTRY_DROPDOWN && (
-            <select
-              className="hierarchy-country-select"
-              value={selectedHierarchyCountry}
-              onChange={handleHierarchyCountryChange}
-              disabled={hierarchyCountriesLoading}
+        <div className="search-container">
+          <div className="search-bar-primary">
+            <input 
+              placeholder="Enter city or country (e.g. Delhi, India)" 
+              value={city} 
+              list="country-suggestions"
+              onChange={e => setCity(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  handleShow();
+                }
+              }}
+            />
+            <button 
+              onClick={handleShow} 
+              className={`show-data-btn ${isLoading ? 'loading' : ''}`}
+              disabled={isLoading}
             >
-              <option value="">Select supported country (optional)</option>
-              {hierarchyCountries.map(countryName => (
-                <option key={countryName} value={countryName}>{countryName}</option>
-              ))}
-            </select>
-          )}
-          {ENABLE_HIERARCHY_STATE_DROPDOWN && (
-            <select
-              className="hierarchy-state-select"
-              value={selectedHierarchyState}
-              onChange={handleHierarchyStateChange}
-              disabled={!selectedHierarchyCountry || hierarchyStatesLoading}
+              {isLoading && <span className="spinner"></span>}
+              Show Data
+            </button>
+            <button 
+              type="button"
+              className={`advanced-filters-toggle-btn ${advancedFiltersOpen ? 'active' : ''}`}
+              onClick={() => setAdvancedFiltersOpen(!advancedFiltersOpen)}
             >
-              <option value="">Select state/region (optional)</option>
-              {hierarchyStates.map(stateName => (
-                <option key={stateName} value={stateName}>{stateName}</option>
-              ))}
-            </select>
+              ⚙️ {advancedFiltersOpen ? "Hide Filters" : "Advanced Filters"}
+            </button>
+          </div>
+
+          {advancedFiltersOpen && (
+            <div className="advanced-filters-drawer">
+              <div className="filter-select-group">
+                {ENABLE_HIERARCHY_COUNTRY_DROPDOWN && (
+                  <div className="filter-select-item">
+                    <label>Country Filter</label>
+                    <select
+                      className="hierarchy-country-select"
+                      value={selectedHierarchyCountry}
+                      onChange={handleHierarchyCountryChange}
+                      disabled={hierarchyCountriesLoading}
+                    >
+                      <option value="">Select country (optional)</option>
+                      {hierarchyCountries.map(countryName => (
+                        <option key={countryName} value={countryName}>{countryName}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {ENABLE_HIERARCHY_STATE_DROPDOWN && (
+                  <div className="filter-select-item">
+                    <label>State/Region Filter</label>
+                    <select
+                      className="hierarchy-state-select"
+                      value={selectedHierarchyState}
+                      onChange={handleHierarchyStateChange}
+                      disabled={!selectedHierarchyCountry || hierarchyStatesLoading}
+                    >
+                      <option value="">Select state/region (optional)</option>
+                      {hierarchyStates.map(stateName => (
+                        <option key={stateName} value={stateName}>{stateName}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                {ENABLE_HIERARCHY_CITY_DROPDOWN && (
+                  <div className="filter-select-item">
+                    <label>City Filter</label>
+                    <select
+                      className="hierarchy-city-select"
+                      value={selectedHierarchyCity}
+                      onChange={handleHierarchyCityChange}
+                      disabled={!selectedHierarchyState || hierarchyCitiesLoading}
+                    >
+                      <option value="">Select city (optional)</option>
+                      {hierarchyCities.map(cityName => (
+                        <option key={cityName} value={cityName}>{cityName}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+              </div>
+            </div>
           )}
-          {ENABLE_HIERARCHY_CITY_DROPDOWN && (
-            <select
-              className="hierarchy-city-select"
-              value={selectedHierarchyCity}
-              onChange={handleHierarchyCityChange}
-              disabled={!selectedHierarchyState || hierarchyCitiesLoading}
-            >
-              <option value="">Select city (optional)</option>
-              {hierarchyCities.map(cityName => (
-                <option key={cityName} value={cityName}>{cityName}</option>
-              ))}
-            </select>
-          )}
-          <input 
-            placeholder="Enter city or country (e.g. Delhi, India)" 
-            value={city} 
-            list="country-suggestions"
-            onChange={e => setCity(e.target.value)}
-            onKeyDown={e => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                handleShow();
-              }
-            }}
-          />
-          <button 
-            onClick={handleShow} 
-            className={`show-data-btn ${isLoading ? 'loading' : ''}`}
-            disabled={isLoading}
-          >
-            {isLoading && <span className="spinner"></span>}
-            Show Data
-          </button>
+
           <datalist id="country-suggestions">
-            {countryOptions.map(countryName => (
-              <option key={countryName} value={countryName} />
+            {displaySuggestions.map(suggestion => (
+              <option key={suggestion} value={suggestion} />
             ))}
           </datalist>
         </div>
@@ -1409,6 +1565,25 @@ function App() {
           {data && (
             <div style={{ marginTop: "16px", padding: "12px", backgroundColor: "#f0f8ff", borderRadius: "5px" }}>
               <strong>Location:</strong> {data.resolvedLocation || data.measurements?.[0]?.location || data.city || "Unknown Location"}
+              {data.providerLocation && data.providerLocation !== data.resolvedLocation && (
+                <div style={{ fontSize: "12px", color: "#444", marginTop: "6px" }}>
+                  Provider location: {data.providerLocation}
+                </div>
+              )}
+              {/* Coordinates and map link if available */}
+              {(data.resolvedCoordinates || data.measurements?.[0]?.coordinates) && (
+                (() => {
+                  const coords = data.resolvedCoordinates || data.measurements?.[0]?.coordinates;
+                  const lat = Array.isArray(coords) ? coords[0] : coords.latitude || coords.lat;
+                  const lon = Array.isArray(coords) ? coords[1] : coords.longitude || coords.lon;
+                  const mapUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(lat + ',' + lon)}`;
+                  return (
+                    <div style={{ fontSize: "12px", color: "#444", marginTop: "6px" }}>
+                      Coordinates: {lat}, {lon} • <a href={mapUrl} target="_blank" rel="noreferrer">View on Google Maps</a>
+                    </div>
+                  );
+                })()
+              )}
               {data.empty && data.emptyMessage && (
                 <div style={{ fontSize: "12px", color: "#8a5d00", marginTop: "6px" }}>
                   {data.emptyMessage}

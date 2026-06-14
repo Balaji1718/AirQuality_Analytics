@@ -23,6 +23,99 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Ox
 .search-bar .hierarchy-state-select { padding: 12px 16px; border-radius: 8px; border: 1px solid #e2e8f0; font-size: 16px; min-width: 240px; background: #fff; }
 .search-bar .hierarchy-city-select { padding: 12px 16px; border-radius: 8px; border: 1px solid #e2e8f0; font-size: 16px; min-width: 220px; background: #fff; }
 .search-bar input { padding: 12px 16px; border-radius: 8px; border: 1px solid #e2e8f0; font-size: 16px; width: 300px; }
+
+/* Collapsed Search Controls Styling */
+.search-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  width: 100%;
+  max-width: 900px;
+  margin: 0 auto;
+}
+.search-bar-primary {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  align-items: center;
+  width: 100%;
+}
+.search-bar-primary input {
+  padding: 12px 16px;
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  font-size: 16px;
+  flex: 1;
+  max-width: 450px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+}
+.advanced-filters-toggle-btn {
+  padding: 12px 18px;
+  border-radius: 8px;
+  border: 1px solid #cbd5e1;
+  background: #f8fafc;
+  color: #334155;
+  cursor: pointer;
+  font-size: 15px;
+  font-weight: 600;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.advanced-filters-toggle-btn:hover {
+  background: #f1f5f9;
+  border-color: #94a3b8;
+}
+.advanced-filters-toggle-btn.active {
+  background: #e2e8f0;
+  border-color: #64748b;
+  color: #0f172a;
+}
+.advanced-filters-drawer {
+  width: 100%;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 20px;
+  box-shadow: inset 0 2px 4px rgba(0,0,0,0.02);
+  animation: fadeIn 0.25s ease-out;
+}
+.filter-select-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  justify-content: center;
+  width: 100%;
+}
+.filter-select-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 200px;
+  max-width: 280px;
+}
+.filter-select-item label {
+  font-size: 13px;
+  font-weight: 700;
+  color: #475569;
+  text-align: left;
+}
+.filter-select-item select {
+  padding: 10px 14px;
+  border-radius: 8px;
+  border: 1px solid #cbd5e1;
+  font-size: 14px;
+  background: #fff;
+  color: #334155;
+  outline: none;
+}
+.filter-select-item select:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
 /* Enhanced Show Data Button */
 .show-data-btn { 
   padding: 12px 20px; 

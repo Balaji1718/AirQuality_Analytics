@@ -1,0 +1,1162 @@
+[
+  {
+    "locationName": "Delhi",
+    "body": {
+      "city": "Delhi",
+      "country": "India",
+      "state": "Delhi"
+    },
+    "empty": false,
+    "provider": "OpenAQ",
+    "totalStationsReturned": 1,
+    "resolvedLocation": "Delhi Technological University, Delhi - CPCB",
+    "coordinates": [
+      28.744,
+      77.12
+    ],
+    "stationMetadata": {
+      "stationId": 13,
+      "stationName": "Delhi Technological University, Delhi - CPCB",
+      "coordinates": {
+        "lat": 28.744,
+        "lon": 77.12
+      },
+      "confidence": 0.98
+    },
+    "aqiValues": {
+      "pm25": 446.49,
+      "pm10": null,
+      "no2": 73.17
+    },
+    "stationAveragingDetected": true,
+    "metadataLossDetected": false,
+    "crossCityContamination": false,
+    "hierarchyBehavior": {
+      "level": "region",
+      "country": "India",
+      "state": "Delhi",
+      "regionCandidates": [
+        "Delhi"
+      ],
+      "matchedRegion": "Delhi",
+      "queryCandidates": [
+        "Delhi, India",
+        "Delhi"
+      ],
+      "source": "OpenAQ"
+    }
+  },
+  {
+    "locationName": "Mumbai",
+    "body": {
+      "city": "Mumbai",
+      "country": "India",
+      "state": "Maharashtra"
+    },
+    "empty": false,
+    "provider": "WAQI",
+    "totalStationsReturned": 5,
+    "resolvedLocation": "Sion, Mumbai, India",
+    "coordinates": [
+      19.047,
+      72.8746
+    ],
+    "stationMetadata": {
+      "stationId": 12464,
+      "stationName": "Sion, Mumbai, India",
+      "coordinates": {
+        "lat": 19.047,
+        "lon": 72.8746
+      },
+      "confidence": 0.98
+    },
+    "aqiValues": {
+      "pm25": null,
+      "pm10": null,
+      "no2": 17.5
+    },
+    "stationAveragingDetected": false,
+    "metadataLossDetected": false,
+    "crossCityContamination": false,
+    "hierarchyBehavior": {
+      "level": "region",
+      "country": "India",
+      "state": "Maharashtra",
+      "regionCandidates": [
+        "Mumbai"
+      ],
+      "matchedRegion": "Mumbai",
+      "queryCandidates": [
+        "Mumbai, India",
+        "Mumbai"
+      ],
+      "source": "WAQI"
+    }
+  },
+  {
+    "locationName": "Bengaluru",
+    "body": {
+      "city": "Bengaluru",
+      "country": "India",
+      "state": "Karnataka"
+    },
+    "empty": false,
+    "provider": "WAQI",
+    "totalStationsReturned": 1,
+    "resolvedLocation": "Hebbal, Bengaluru, India",
+    "coordinates": [
+      13.029152,
+      77.585901
+    ],
+    "stationMetadata": {
+      "stationId": 11428,
+      "stationName": "Hebbal, Bengaluru, India",
+      "coordinates": {
+        "lat": 13.029152,
+        "lon": 77.585901
+      },
+      "confidence": 0.98
+    },
+    "aqiValues": {
+      "pm25": 56,
+      "pm10": 42,
+      "no2": 33.3
+    },
+    "stationAveragingDetected": false,
+    "metadataLossDetected": false,
+    "crossCityContamination": false,
+    "hierarchyBehavior": {
+      "level": "region",
+      "country": "India",
+      "state": "Karnataka",
+      "regionCandidates": [
+        "Bengaluru"
+      ],
+      "matchedRegion": "Bengaluru",
+      "queryCandidates": [
+        "Bengaluru, India",
+        "Bengaluru"
+      ],
+      "source": "WAQI"
+    }
+  },
+  {
+    "locationName": "Chennai",
+    "body": {
+      "city": "Chennai",
+      "country": "India",
+      "state": "Tamil Nadu"
+    },
+    "empty": false,
+    "provider": "WAQI",
+    "totalStationsReturned": 5,
+    "resolvedLocation": "Manali, Chennai, Chennai, India",
+    "coordinates": [
+      13.164544,
+      80.26285
+    ],
+    "stationMetadata": {
+      "stationId": 8185,
+      "stationName": "Manali, Chennai, Chennai, India",
+      "coordinates": {
+        "lat": 13.164544,
+        "lon": 80.26285
+      },
+      "confidence": 0.98
+    },
+    "aqiValues": {
+      "pm25": 76,
+      "pm10": 68,
+      "no2": 3.9
+    },
+    "stationAveragingDetected": false,
+    "metadataLossDetected": false,
+    "crossCityContamination": false,
+    "hierarchyBehavior": {
+      "level": "region",
+      "country": "India",
+      "state": "Tamil Nadu",
+      "regionCandidates": [
+        "Chennai"
+      ],
+      "matchedRegion": "Chennai",
+      "queryCandidates": [
+        "Chennai, India",
+        "Chennai"
+      ],
+      "source": "WAQI"
+    }
+  },
+  {
+    "locationName": "Kolkata",
+    "body": {
+      "city": "Kolkata",
+      "country": "India",
+      "state": "West Bengal"
+    },
+    "empty": false,
+    "provider": "WAQI",
+    "totalStationsReturned": 5,
+    "resolvedLocation": "Ballygunge, Kolkata, India",
+    "coordinates": [
+      22.5367507,
+      88.3638022
+    ],
+    "stationMetadata": {
+      "stationId": 12746,
+      "stationName": "Ballygunge, Kolkata, India",
+      "coordinates": {
+        "lat": 22.5367507,
+        "lon": 88.3638022
+      },
+      "confidence": 0.98
+    },
+    "aqiValues": {
+      "pm25": 88,
+      "pm10": 49,
+      "no2": 9.2
+    },
+    "stationAveragingDetected": false,
+    "metadataLossDetected": false,
+    "crossCityContamination": false,
+    "hierarchyBehavior": {
+      "level": "region",
+      "country": "India",
+      "state": "West Bengal",
+      "regionCandidates": [
+        "Kolkata"
+      ],
+      "matchedRegion": "Kolkata",
+      "queryCandidates": [
+        "Kolkata, India",
+        "Kolkata"
+      ],
+      "source": "WAQI"
+    }
+  },
+  {
+    "locationName": "Pune",
+    "body": {
+      "city": "Pune",
+      "country": "India",
+      "state": "Maharashtra"
+    },
+    "empty": false,
+    "provider": "WAQI",
+    "totalStationsReturned": 3,
+    "resolvedLocation": "Manjri, Pune, Pune, India",
+    "coordinates": [
+      18.526778,
+      73.975028
+    ],
+    "stationMetadata": {
+      "stationId": 3767,
+      "stationName": "Manjri, Pune, Pune, India",
+      "coordinates": {
+        "lat": 18.526778,
+        "lon": 73.975028
+      },
+      "confidence": 0.98
+    },
+    "aqiValues": {
+      "pm25": null,
+      "pm10": null,
+      "no2": null
+    },
+    "stationAveragingDetected": false,
+    "metadataLossDetected": false,
+    "crossCityContamination": false,
+    "hierarchyBehavior": {
+      "level": "region",
+      "country": "India",
+      "state": "Maharashtra",
+      "regionCandidates": [
+        "Pune"
+      ],
+      "matchedRegion": "Pune",
+      "queryCandidates": [
+        "Pune, India",
+        "Pune"
+      ],
+      "source": "WAQI"
+    }
+  },
+  {
+    "locationName": "Hyderabad",
+    "body": {
+      "city": "Hyderabad",
+      "country": "India",
+      "state": "Telangana"
+    },
+    "empty": false,
+    "provider": "WAQI",
+    "totalStationsReturned": 2,
+    "resolvedLocation": "Bollaram Industrial Area, Hyderabad, India",
+    "coordinates": [
+      17.540891,
+      78.358528
+    ],
+    "stationMetadata": {
+      "stationId": 11295,
+      "stationName": "Bollaram Industrial Area, Hyderabad, India",
+      "coordinates": {
+        "lat": 17.540891,
+        "lon": 78.358528
+      },
+      "confidence": 0.98
+    },
+    "aqiValues": {
+      "pm25": 156,
+      "pm10": 112,
+      "no2": 7.2
+    },
+    "stationAveragingDetected": false,
+    "metadataLossDetected": false,
+    "crossCityContamination": false,
+    "hierarchyBehavior": {
+      "level": "region",
+      "country": "India",
+      "state": "Telangana",
+      "regionCandidates": [
+        "Hyderabad"
+      ],
+      "matchedRegion": "Hyderabad",
+      "queryCandidates": [
+        "Hyderabad, India",
+        "Hyderabad"
+      ],
+      "source": "WAQI"
+    }
+  },
+  {
+    "locationName": "Jaipur",
+    "body": {
+      "city": "Jaipur",
+      "country": "India",
+      "state": "Rajasthan"
+    },
+    "empty": false,
+    "provider": "WAQI",
+    "totalStationsReturned": 3,
+    "resolvedLocation": "Shastri Nagar, Jaipur, India",
+    "coordinates": [
+      26.9502929,
+      75.730943
+    ],
+    "stationMetadata": {
+      "stationId": 11304,
+      "stationName": "Shastri Nagar, Jaipur, India",
+      "coordinates": {
+        "lat": 26.9502929,
+        "lon": 75.730943
+      },
+      "confidence": 0.98
+    },
+    "aqiValues": {
+      "pm25": 98,
+      "pm10": 70,
+      "no2": 16.7
+    },
+    "stationAveragingDetected": false,
+    "metadataLossDetected": false,
+    "crossCityContamination": false,
+    "hierarchyBehavior": {
+      "level": "region",
+      "country": "India",
+      "state": "Rajasthan",
+      "regionCandidates": [
+        "Jaipur"
+      ],
+      "matchedRegion": "Jaipur",
+      "queryCandidates": [
+        "Jaipur, India",
+        "Jaipur"
+      ],
+      "source": "WAQI"
+    }
+  },
+  {
+    "locationName": "New York",
+    "body": {
+      "city": "New York",
+      "country": "United States",
+      "state": "New York"
+    },
+    "empty": false,
+    "provider": "WAQI",
+    "totalStationsReturned": 3,
+    "resolvedLocation": "New York, USA",
+    "coordinates": [
+      40.7143528,
+      -74.0059731
+    ],
+    "stationMetadata": {
+      "stationId": 3307,
+      "stationName": "New York, USA",
+      "coordinates": {
+        "lat": 40.7143528,
+        "lon": -74.0059731
+      },
+      "confidence": 0.9
+    },
+    "aqiValues": {
+      "pm25": 39,
+      "pm10": null,
+      "no2": 8.8
+    },
+    "stationAveragingDetected": false,
+    "metadataLossDetected": false,
+    "crossCityContamination": false,
+    "hierarchyBehavior": {
+      "level": "region",
+      "country": "United States",
+      "state": "New York",
+      "regionCandidates": [
+        "New York"
+      ],
+      "matchedRegion": "New York",
+      "queryCandidates": [
+        "New York, United States",
+        "New York"
+      ],
+      "source": "WAQI"
+    }
+  },
+  {
+    "locationName": "Los Angeles",
+    "body": {
+      "city": "Los Angeles",
+      "country": "United States",
+      "state": "California"
+    },
+    "empty": false,
+    "provider": "WAQI",
+    "totalStationsReturned": 2,
+    "resolvedLocation": "Los Angeles-North Main Street",
+    "coordinates": [
+      34.06653,
+      -118.22676
+    ],
+    "stationMetadata": {
+      "stationId": 243,
+      "stationName": "Los Angeles-North Main Street",
+      "coordinates": {
+        "lat": 34.06653,
+        "lon": -118.22676
+      },
+      "confidence": 0.9
+    },
+    "aqiValues": {
+      "pm25": 43,
+      "pm10": 34,
+      "no2": 20.9
+    },
+    "stationAveragingDetected": false,
+    "metadataLossDetected": false,
+    "crossCityContamination": false,
+    "hierarchyBehavior": {
+      "level": "region",
+      "country": "United States",
+      "state": "California",
+      "regionCandidates": [
+        "Los Angeles"
+      ],
+      "matchedRegion": "Los Angeles",
+      "queryCandidates": [
+        "Los Angeles, United States",
+        "Los Angeles"
+      ],
+      "source": "WAQI"
+    }
+  },
+  {
+    "locationName": "Chicago",
+    "body": {
+      "city": "Chicago",
+      "country": "United States",
+      "state": "Illinois"
+    },
+    "empty": false,
+    "provider": "WAQI",
+    "totalStationsReturned": 1,
+    "resolvedLocation": "East Chicago - Marina, Indiana, USA",
+    "coordinates": [
+      41.653446,
+      -87.435435
+    ],
+    "stationMetadata": {
+      "stationId": 13147,
+      "stationName": "East Chicago - Marina, Indiana, USA",
+      "coordinates": {
+        "lat": 41.653446,
+        "lon": -87.435435
+      },
+      "confidence": 0.9
+    },
+    "aqiValues": {
+      "pm25": 16,
+      "pm10": null,
+      "no2": null
+    },
+    "stationAveragingDetected": false,
+    "metadataLossDetected": false,
+    "crossCityContamination": false,
+    "hierarchyBehavior": {
+      "level": "region",
+      "country": "United States",
+      "state": "Illinois",
+      "regionCandidates": [
+        "Chicago"
+      ],
+      "matchedRegion": "Chicago",
+      "queryCandidates": [
+        "Chicago, United States",
+        "Chicago"
+      ],
+      "source": "WAQI"
+    }
+  },
+  {
+    "locationName": "Houston",
+    "body": {
+      "city": "Houston",
+      "country": "United States",
+      "state": "Texas"
+    },
+    "empty": false,
+    "provider": "WAQI",
+    "totalStationsReturned": 3,
+    "resolvedLocation": "Houston East, Houston, Texas",
+    "coordinates": [
+      29.7679707,
+      -95.2205867
+    ],
+    "stationMetadata": {
+      "stationId": 181,
+      "stationName": "Houston East, Houston, Texas",
+      "coordinates": {
+        "lat": 29.7679707,
+        "lon": -95.2205867
+      },
+      "confidence": 0.9
+    },
+    "aqiValues": {
+      "pm25": 37,
+      "pm10": null,
+      "no2": 4.4
+    },
+    "stationAveragingDetected": false,
+    "metadataLossDetected": false,
+    "crossCityContamination": false,
+    "hierarchyBehavior": {
+      "level": "region",
+      "country": "United States",
+      "state": "Texas",
+      "regionCandidates": [
+        "Houston"
+      ],
+      "matchedRegion": "Houston",
+      "queryCandidates": [
+        "Houston, United States",
+        "Houston"
+      ],
+      "source": "WAQI"
+    }
+  },
+  {
+    "locationName": "San Francisco",
+    "body": {
+      "city": "San Francisco",
+      "country": "United States",
+      "state": "California"
+    },
+    "empty": false,
+    "provider": "WAQI",
+    "totalStationsReturned": 1,
+    "resolvedLocation": "San Francisco-Arkansas Street, San Francisco, California",
+    "coordinates": [
+      37.76595,
+      -122.39902
+    ],
+    "stationMetadata": {
+      "stationId": 3900,
+      "stationName": "San Francisco-Arkansas Street, San Francisco, California",
+      "coordinates": {
+        "lat": 37.76595,
+        "lon": -122.39902
+      },
+      "confidence": 0.9
+    },
+    "aqiValues": {
+      "pm25": 21,
+      "pm10": null,
+      "no2": 8.8
+    },
+    "stationAveragingDetected": false,
+    "metadataLossDetected": false,
+    "crossCityContamination": false,
+    "hierarchyBehavior": {
+      "level": "local",
+      "country": "United States",
+      "state": "California",
+      "regionCandidates": [],
+      "matchedRegion": null,
+      "queryCandidates": [
+        "San Francisco"
+      ],
+      "source": "WAQI"
+    }
+  },
+  {
+    "locationName": "London",
+    "body": {
+      "city": "London",
+      "country": "United Kingdom"
+    },
+    "empty": false,
+    "provider": "WAQI",
+    "totalStationsReturned": 2,
+    "resolvedLocation": "London Eltham, United Kingdom",
+    "coordinates": [
+      51.45258,
+      0.070766
+    ],
+    "stationMetadata": {
+      "stationId": 3190,
+      "stationName": "London Eltham, United Kingdom",
+      "coordinates": {
+        "lat": 51.45258,
+        "lon": 0.070766
+      },
+      "confidence": 0.75
+    },
+    "aqiValues": {
+      "pm25": 43,
+      "pm10": 24,
+      "no2": 13.9
+    },
+    "stationAveragingDetected": false,
+    "metadataLossDetected": false,
+    "crossCityContamination": false,
+    "hierarchyBehavior": {
+      "level": "region",
+      "country": "United Kingdom",
+      "state": null,
+      "regionCandidates": [
+        "London"
+      ],
+      "matchedRegion": "London",
+      "queryCandidates": [
+        "London, United Kingdom",
+        "London"
+      ],
+      "source": "WAQI"
+    }
+  },
+  {
+    "locationName": "Birmingham",
+    "body": {
+      "city": "Birmingham",
+      "country": "United Kingdom"
+    },
+    "empty": false,
+    "provider": "WAQI",
+    "totalStationsReturned": 1,
+    "resolvedLocation": "Birmingham Tyburn, United Kingdom",
+    "coordinates": [
+      52.511722,
+      -1.830583
+    ],
+    "stationMetadata": {
+      "stationId": 3162,
+      "stationName": "Birmingham Tyburn, United Kingdom",
+      "coordinates": {
+        "lat": 52.511722,
+        "lon": -1.830583
+      },
+      "confidence": 0.78125
+    },
+    "aqiValues": {
+      "pm25": 27,
+      "pm10": 16,
+      "no2": null
+    },
+    "stationAveragingDetected": false,
+    "metadataLossDetected": false,
+    "crossCityContamination": false,
+    "hierarchyBehavior": {
+      "level": "region",
+      "country": "United Kingdom",
+      "state": null,
+      "regionCandidates": [
+        "Birmingham"
+      ],
+      "matchedRegion": "Birmingham",
+      "queryCandidates": [
+        "Birmingham, United Kingdom",
+        "Birmingham"
+      ],
+      "source": "WAQI"
+    }
+  },
+  {
+    "locationName": "Manchester",
+    "body": {
+      "city": "Manchester",
+      "country": "United Kingdom"
+    },
+    "empty": false,
+    "provider": "WAQI",
+    "totalStationsReturned": 1,
+    "resolvedLocation": "Anglesey Brynteg, United Kingdom",
+    "coordinates": [
+      53.307155,
+      -4.274216
+    ],
+    "stationMetadata": {
+      "stationId": 9042,
+      "stationName": "Anglesey Brynteg, United Kingdom",
+      "coordinates": {
+        "lat": 53.307155,
+        "lon": -4.274216
+      },
+      "confidence": 0.6451612903225806
+    },
+    "aqiValues": {
+      "pm25": null,
+      "pm10": null,
+      "no2": null
+    },
+    "stationAveragingDetected": false,
+    "metadataLossDetected": false,
+    "crossCityContamination": false,
+    "hierarchyBehavior": {
+      "level": "region",
+      "country": "United Kingdom",
+      "state": null,
+      "regionCandidates": [
+        "Manchester"
+      ],
+      "matchedRegion": "Manchester",
+      "queryCandidates": [
+        "Manchester, United Kingdom",
+        "Manchester"
+      ],
+      "source": "WAQI"
+    }
+  },
+  {
+    "locationName": "Sydney",
+    "body": {
+      "city": "Sydney",
+      "country": "Australia"
+    },
+    "empty": false,
+    "provider": "WAQI",
+    "totalStationsReturned": 5,
+    "resolvedLocation": "Cook And Phillip Sydney East",
+    "coordinates": [
+      -33.872468,
+      151.213337
+    ],
+    "stationMetadata": {
+      "stationId": 12417,
+      "stationName": "Cook And Phillip Sydney East",
+      "coordinates": {
+        "lat": -33.872468,
+        "lon": 151.213337
+      },
+      "confidence": 0.9
+    },
+    "aqiValues": {
+      "pm25": 31,
+      "pm10": 16,
+      "no2": 13.4
+    },
+    "stationAveragingDetected": false,
+    "metadataLossDetected": false,
+    "crossCityContamination": false,
+    "hierarchyBehavior": {
+      "level": "region",
+      "country": "Australia",
+      "state": null,
+      "regionCandidates": [
+        "Sydney"
+      ],
+      "matchedRegion": "Sydney",
+      "queryCandidates": [
+        "Sydney, Australia",
+        "Sydney"
+      ],
+      "source": "WAQI"
+    }
+  },
+  {
+    "locationName": "Melbourne",
+    "body": {
+      "city": "Melbourne",
+      "country": "Australia"
+    },
+    "empty": false,
+    "provider": "WAQI",
+    "totalStationsReturned": 1,
+    "resolvedLocation": "Melbourne CBD",
+    "coordinates": [
+      -37.8073959,
+      144.97
+    ],
+    "stationMetadata": {
+      "stationId": 10141,
+      "stationName": "Melbourne CBD",
+      "coordinates": {
+        "lat": -37.8073959,
+        "lon": 144.97
+      },
+      "confidence": 0.9
+    },
+    "aqiValues": {
+      "pm25": 18,
+      "pm10": 11,
+      "no2": 3.8
+    },
+    "stationAveragingDetected": false,
+    "metadataLossDetected": false,
+    "crossCityContamination": false,
+    "hierarchyBehavior": {
+      "level": "region",
+      "country": "Australia",
+      "state": null,
+      "regionCandidates": [
+        "Melbourne"
+      ],
+      "matchedRegion": "Melbourne",
+      "queryCandidates": [
+        "Melbourne, Australia",
+        "Melbourne"
+      ],
+      "source": "WAQI"
+    }
+  },
+  {
+    "locationName": "Toronto",
+    "body": {
+      "city": "Toronto",
+      "country": "Canada"
+    },
+    "empty": false,
+    "provider": "WAQI",
+    "totalStationsReturned": 5,
+    "resolvedLocation": "Toronto Downtown, Ontario, Canada",
+    "coordinates": [
+      43.662972,
+      -79.388111
+    ],
+    "stationMetadata": {
+      "stationId": 34,
+      "stationName": "Toronto Downtown, Ontario, Canada",
+      "coordinates": {
+        "lat": 43.662972,
+        "lon": -79.388111
+      },
+      "confidence": 0.9
+    },
+    "aqiValues": {
+      "pm25": 17,
+      "pm10": null,
+      "no2": 5.8
+    },
+    "stationAveragingDetected": false,
+    "metadataLossDetected": false,
+    "crossCityContamination": false,
+    "hierarchyBehavior": {
+      "level": "region",
+      "country": "Canada",
+      "state": null,
+      "regionCandidates": [
+        "Toronto"
+      ],
+      "matchedRegion": "Toronto",
+      "queryCandidates": [
+        "Toronto, Canada",
+        "Toronto"
+      ],
+      "source": "WAQI"
+    }
+  },
+  {
+    "locationName": "Vancouver",
+    "body": {
+      "city": "Vancouver",
+      "country": "Canada"
+    },
+    "empty": false,
+    "provider": "WAQI",
+    "totalStationsReturned": 4,
+    "resolvedLocation": "Vancouver Clark Drive, British Comlumbia, Canada",
+    "coordinates": [
+      49.26029,
+      -123.077811
+    ],
+    "stationMetadata": {
+      "stationId": 14111,
+      "stationName": "Vancouver Clark Drive, British Comlumbia, Canada",
+      "coordinates": {
+        "lat": 49.26029,
+        "lon": -123.077811
+      },
+      "confidence": 0.9
+    },
+    "aqiValues": {
+      "pm25": 14,
+      "pm10": null,
+      "no2": 2.5
+    },
+    "stationAveragingDetected": false,
+    "metadataLossDetected": false,
+    "crossCityContamination": false,
+    "hierarchyBehavior": {
+      "level": "region",
+      "country": "Canada",
+      "state": null,
+      "regionCandidates": [
+        "Vancouver"
+      ],
+      "matchedRegion": "Vancouver",
+      "queryCandidates": [
+        "Vancouver, Canada",
+        "Vancouver"
+      ],
+      "source": "WAQI"
+    }
+  },
+  {
+    "locationName": "São Paulo",
+    "body": {
+      "city": "São Paulo",
+      "country": "Brazil"
+    },
+    "empty": false,
+    "provider": "WAQI",
+    "totalStationsReturned": 5,
+    "resolvedLocation": "Guarulhos-Paço Municipal, São Paulo, Brazil",
+    "coordinates": [
+      -23.455534258,
+      -46.518533403
+    ],
+    "stationMetadata": {
+      "stationId": 343,
+      "stationName": "Guarulhos-Paço Municipal, São Paulo, Brazil",
+      "coordinates": {
+        "lat": -23.455534258,
+        "lon": -46.518533403
+      },
+      "confidence": 0.9
+    },
+    "aqiValues": {
+      "pm25": 21,
+      "pm10": 8,
+      "no2": null
+    },
+    "stationAveragingDetected": false,
+    "metadataLossDetected": false,
+    "crossCityContamination": false,
+    "hierarchyBehavior": {
+      "level": "region",
+      "country": "Brazil",
+      "state": null,
+      "regionCandidates": [
+        "São Paulo"
+      ],
+      "matchedRegion": "São Paulo",
+      "queryCandidates": [
+        "São Paulo, Brazil",
+        "São Paulo"
+      ],
+      "source": "WAQI"
+    }
+  },
+  {
+    "locationName": "Rio de Janeiro",
+    "body": {
+      "city": "Rio de Janeiro",
+      "country": "Brazil"
+    },
+    "empty": false,
+    "provider": "WAQI",
+    "totalStationsReturned": 1,
+    "resolvedLocation": "Manguinhos, RJ, Rio De Janeiro, Brazil",
+    "coordinates": [
+      -22.884198,
+      -43.242592
+    ],
+    "stationMetadata": {
+      "stationId": 14042,
+      "stationName": "Manguinhos, RJ, Rio De Janeiro, Brazil",
+      "coordinates": {
+        "lat": -22.884198,
+        "lon": -43.242592
+      },
+      "confidence": 0.9
+    },
+    "aqiValues": {
+      "pm25": null,
+      "pm10": null,
+      "no2": null
+    },
+    "stationAveragingDetected": false,
+    "metadataLossDetected": false,
+    "crossCityContamination": false,
+    "hierarchyBehavior": {
+      "level": "region",
+      "country": "Brazil",
+      "state": null,
+      "regionCandidates": [
+        "Rio de Janeiro"
+      ],
+      "matchedRegion": "Rio de Janeiro",
+      "queryCandidates": [
+        "Rio de Janeiro, Brazil",
+        "Rio de Janeiro"
+      ],
+      "source": "WAQI"
+    }
+  },
+  {
+    "locationName": "Beijing",
+    "body": {
+      "city": "Beijing",
+      "country": "China"
+    },
+    "empty": false,
+    "provider": "WAQI",
+    "totalStationsReturned": 5,
+    "resolvedLocation": "Chaoyang Agricultural Exhibition Hall, Beijing (朝阳农展馆)",
+    "coordinates": [
+      39.937,
+      116.461
+    ],
+    "stationMetadata": {
+      "stationId": 451,
+      "stationName": "Chaoyang Agricultural Exhibition Hall, Beijing (朝阳农展馆)",
+      "coordinates": {
+        "lat": 39.937,
+        "lon": 116.461
+      },
+      "confidence": 0.9
+    },
+    "aqiValues": {
+      "pm25": 65,
+      "pm10": 39,
+      "no2": 13.8
+    },
+    "stationAveragingDetected": false,
+    "metadataLossDetected": false,
+    "crossCityContamination": false,
+    "hierarchyBehavior": {
+      "level": "region",
+      "country": "China",
+      "state": null,
+      "regionCandidates": [
+        "Beijing"
+      ],
+      "matchedRegion": "Beijing",
+      "queryCandidates": [
+        "Beijing, China",
+        "Beijing"
+      ],
+      "source": "WAQI"
+    }
+  },
+  {
+    "locationName": "Shanghai",
+    "body": {
+      "city": "Shanghai",
+      "country": "China"
+    },
+    "empty": false,
+    "provider": "WAQI",
+    "totalStationsReturned": 5,
+    "resolvedLocation": "Putuo Monitoring Station, Shanghai (普陀监测站)",
+    "coordinates": [
+      31.234814,
+      121.410728
+    ],
+    "stationMetadata": {
+      "stationId": 481,
+      "stationName": "Putuo Monitoring Station, Shanghai (普陀监测站)",
+      "coordinates": {
+        "lat": 31.234814,
+        "lon": 121.410728
+      },
+      "confidence": 0.9
+    },
+    "aqiValues": {
+      "pm25": 72,
+      "pm10": 35,
+      "no2": 10.1
+    },
+    "stationAveragingDetected": false,
+    "metadataLossDetected": false,
+    "crossCityContamination": false,
+    "hierarchyBehavior": {
+      "level": "region",
+      "country": "China",
+      "state": null,
+      "regionCandidates": [
+        "Shanghai"
+      ],
+      "matchedRegion": "Shanghai",
+      "queryCandidates": [
+        "Shanghai, China",
+        "Shanghai"
+      ],
+      "source": "WAQI"
+    }
+  },
+  {
+    "locationName": "Tokyo",
+    "body": {
+      "city": "Tokyo",
+      "country": "Japan"
+    },
+    "empty": false,
+    "provider": "WAQI",
+    "totalStationsReturned": 5,
+    "resolvedLocation": "Ayase, Adachi, Tokyo, Japan (足立区綾瀬足立区)",
+    "coordinates": [
+      35.766944,
+      139.829167
+    ],
+    "stationMetadata": {
+      "stationId": 2313,
+      "stationName": "Ayase, Adachi, Tokyo, Japan (足立区綾瀬足立区)",
+      "coordinates": {
+        "lat": 35.766944,
+        "lon": 139.829167
+      },
+      "confidence": 0.9
+    },
+    "aqiValues": {
+      "pm25": 30,
+      "pm10": 10,
+      "no2": 10.2
+    },
+    "stationAveragingDetected": false,
+    "metadataLossDetected": false,
+    "crossCityContamination": false,
+    "hierarchyBehavior": {
+      "level": "region",
+      "country": "Japan",
+      "state": null,
+      "regionCandidates": [
+        "Tokyo"
+      ],
+      "matchedRegion": "Tokyo",
+      "queryCandidates": [
+        "Tokyo, Japan",
+        "Tokyo"
+      ],
+      "source": "WAQI"
+    }
+  }
+]

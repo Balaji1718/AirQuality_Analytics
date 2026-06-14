@@ -1,0 +1,244 @@
+{
+  "city": "India",
+  "resolvedLocation": "India",
+  "resolvedCoordinates": [
+    17.349694,
+    78.451437
+  ],
+  "providerLocation": "Aggregated Country Overview",
+  "stationMetadata": {
+    "stationId": "Hyderabad",
+    "stationName": "Hyderabad, India",
+    "coordinates": {
+      "lat": 17.349694,
+      "lon": 78.451437
+    },
+    "confidence": 0.9
+  },
+  "searchContext": {
+    "level": "country",
+    "country": "India",
+    "state": null,
+    "regionCandidates": [
+      "Delhi",
+      "Mumbai",
+      "Bengaluru",
+      "Chennai",
+      "Kolkata",
+      "Hyderabad",
+      "Pune",
+      "Ahmedabad"
+    ],
+    "matchedRegion": null,
+    "queryCandidates": [
+      "Delhi, India",
+      "Mumbai, India",
+      "Bengaluru, India",
+      "Chennai, India",
+      "Kolkata, India",
+      "Hyderabad, India",
+      "Pune, India",
+      "Ahmedabad, India"
+    ],
+    "source": "Database"
+  },
+  "from": "2026-06-06T06:23:06.144Z",
+  "to": "2026-06-13T06:23:06.144Z",
+  "source": "Database",
+  "count": 2939,
+  "snapshot": [
+    {
+      "pollutant": "pm25",
+      "value": 90.63,
+      "unit": "µg/m³"
+    },
+    {
+      "pollutant": "pm10",
+      "value": 59.52,
+      "unit": "µg/m³"
+    },
+    {
+      "pollutant": "no2",
+      "value": 4.77,
+      "unit": "µg/m³"
+    },
+    {
+      "pollutant": "so2",
+      "value": 6.22,
+      "unit": "µg/m³"
+    },
+    {
+      "pollutant": "co",
+      "value": 5.58,
+      "unit": "mg/m³"
+    },
+    {
+      "pollutant": "o3",
+      "value": 5.42,
+      "unit": "µg/m³"
+    }
+  ],
+  "localAdvice": "Air quality in India is unhealthy (PM2.5 high). Limit outdoor activities, especially for children and sensitive individuals. Consider wearing N95 masks outdoors.",
+  "apiInfo": {
+    "primarySource": "Database",
+    "adviceSource": "Rule-based",
+    "availableSources": [
+      "openaq",
+      "waqi",
+      "openweather"
+    ],
+    "note": "Data from Database API (2026-06-06 to 2026-06-13) ≡ƒôà, advice from Rule-based",
+    "resolution": "Resolved as country-level query in India"
+  },
+  "stationsCount": 6,
+  "stationsSample": [
+    {
+      "stationId": "Hyderabad",
+      "resolvedLocation": "Hyderabad, India",
+      "coordinates": [
+        17.349694,
+        78.451437
+      ],
+      "stationMetadata": {
+        "stationId": "Hyderabad",
+        "stationName": "Hyderabad, India",
+        "coordinates": {
+          "lat": 17.349694,
+          "lon": 78.451437
+        },
+        "confidence": 0.9
+      },
+      "snapshot": [
+        {
+          "pollutant": "pm25",
+          "value": 90.63,
+          "unit": "µg/m³"
+        },
+        {
+          "pollutant": "pm10",
+          "value": 59.52,
+          "unit": "µg/m³"
+        },
+        {
+          "pollutant": "no2",
+          "value": 4.77,
+          "unit": "µg/m³"
+        },
+        {
+          "pollutant": "so2",
+          "value": 6.22,
+          "unit": "µg/m³"
+        },
+        {
+          "pollutant": "co",
+          "value": 5.58,
+          "unit": "mg/m³"
+        },
+        {
+          "pollutant": "o3",
+          "value": 5.42,
+          "unit": "µg/m³"
+        }
+      ],
+      "measurementsCount": 504
+    },
+    {
+      "stationId": "Kolkata",
+      "resolvedLocation": "Kolkata, India",
+      "coordinates": [
+        22.627875,
+        88.3804
+      ],
+      "stationMetadata": {
+        "stationId": "Kolkata",
+        "stationName": "Kolkata, India",
+        "coordinates": {
+          "lat": 22.627875,
+          "lon": 88.3804
+        },
+        "confidence": 0.9
+      },
+      "snapshot": [
+        {
+          "pollutant": "pm25",
+          "value": 75.02,
+          "unit": "µg/m³"
+        },
+        {
+          "pollutant": "pm10",
+          "value": 45.65,
+          "unit": "µg/m³"
+        },
+        {
+          "pollutant": "no2",
+          "value": 9.75,
+          "unit": "µg/m³"
+        },
+        {
+          "pollutant": "so2",
+          "value": 3.49,
+          "unit": "µg/m³"
+        },
+        {
+          "pollutant": "co",
+          "value": 3.49,
+          "unit": "mg/m³"
+        },
+        {
+          "pollutant": "o3",
+          "value": 8.26,
+          "unit": "µg/m³"
+        }
+      ],
+      "measurementsCount": 504
+    }
+  ],
+  "resultsSample": [
+    {
+      "city": "Hyderabad",
+      "coordinates": [
+        17.349694,
+        78.451437
+      ],
+      "dateUTC": "2026-06-13T00:00:15.162Z",
+      "location": "Hyderabad, India",
+      "providerLocation": "Hyderabad, India",
+      "stationMetadata": {
+        "stationId": "Hyderabad",
+        "stationName": "Hyderabad, India",
+        "coordinates": {
+          "lat": 17.349694,
+          "lon": 78.451437
+        },
+        "confidence": 0.9
+      },
+      "pollutant": "pm25",
+      "parameter": "pm25",
+      "value": 70,
+      "unit": "µg/m³"
+    },
+    {
+      "city": "Hyderabad",
+      "coordinates": [
+        17.349694,
+        78.451437
+      ],
+      "dateUTC": "2026-06-13T00:00:15.162Z",
+      "location": "Hyderabad, India",
+      "providerLocation": "Hyderabad, India",
+      "stationMetadata": {
+        "stationId": "Hyderabad",
+        "stationName": "Hyderabad, India",
+        "coordinates": {
+          "lat": 17.349694,
+          "lon": 78.451437
+        },
+        "confidence": 0.9
+      },
+      "pollutant": "pm10",
+      "parameter": "pm10",
+      "value": 57,
+      "unit": "µg/m³"
+    }
+  ]
+}

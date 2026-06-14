@@ -382,7 +382,7 @@ async function fetchCities(countryId, stateId, limit, offset) {
   };
 }
 
-async function searchHierarchy(query, limit, type = null) {
+async function searchHierarchy(query, limit, type = null, country = null, state = null) {
   const sourceState = await getCountryDataSource();
   const searchQuery = normalizeSearchText(query);
 
@@ -397,9 +397,11 @@ async function searchHierarchy(query, limit, type = null) {
          WHERE country_name ILIKE $1
             OR COALESCE(iso2, '') ILIKE $1
             OR COALESCE(iso3, '') ILIKE $1
-         ORDER BY country_name ASC
+         ORDER BY 
+           CASE WHEN country_name ILIKE $3 THEN 1 ELSE 2 END,
+           country_name ASC
          LIMIT $2`,
-        [searchPattern, limit]
+        [searchPattern, limit, country || '']
       );
       for (const row of countryRows.rows) {
         results.push({
@@ -422,9 +424,12 @@ async function searchHierarchy(query, limit, type = null) {
          FROM aqi_states ast
          JOIN aqi_countries ac ON ac.id = ast.country_id
          WHERE ast.state_name ILIKE $1
-         ORDER BY ac.country_name ASC, ast.state_name ASC
+         ORDER BY 
+           CASE WHEN ac.country_name ILIKE $3 THEN 1 ELSE 2 END,
+           ac.country_name ASC, 
+           ast.state_name ASC
          LIMIT $2`,
-        [searchPattern, limit - results.length]
+        [searchPattern, limit - results.length, country || '']
       );
       for (const row of stateRows.rows) {
         if (results.length >= limit) break;
@@ -448,9 +453,14 @@ async function searchHierarchy(query, limit, type = null) {
            JOIN aqi_states ast ON ast.id = aci.state_id
            JOIN aqi_countries ac ON ac.id = aci.country_id
            WHERE aci.city_name ILIKE $1
-           ORDER BY ac.country_name ASC, ast.state_name ASC, aci.city_name ASC
+           ORDER BY 
+             CASE WHEN ac.country_name ILIKE $3 THEN 1 ELSE 2 END,
+             CASE WHEN ast.state_name ILIKE $4 THEN 1 ELSE 2 END,
+             ac.country_name ASC, 
+             ast.state_name ASC, 
+             aci.city_name ASC
            LIMIT $2`,
-          [searchPattern, limit - results.length]
+          [searchPattern, limit - results.length, country || '', state || '']
         );
         for (const row of cityRows.rows) {
           if (results.length >= limit) break;
@@ -477,26 +487,26 @@ async function searchHierarchy(query, limit, type = null) {
   const results = [];
 
   if (!type || type === 'country') {
-    countriesList.forEach(country => {
+    countriesList.forEach(countryItem => {
       if (results.length >= limit) return;
-      const normalized = normalizeSearchText(country.name);
+      const normalized = normalizeSearchText(countryItem.name);
       if (normalized.includes(searchQuery) || searchQuery.includes(normalized)) {
         results.push({
           type: 'country',
-          id: country.id,
-          name: country.name,
-          iso2: country.iso2,
-          regions: country.regions,
-          path: country.name,
+          id: countryItem.id,
+          name: countryItem.name,
+          iso2: countryItem.iso2,
+          regions: countryItem.regions,
+          path: countryItem.name,
         });
       }
     });
   }
 
   if ((!type || type === 'state' || type === 'city') && results.length < limit) {
-    countriesList.forEach(country => {
+    countriesList.forEach(countryItem => {
       if (results.length >= limit) return;
-      const countryData = coverageData[country.name] || {};
+      const countryData = coverageData[countryItem.name] || {};
       const regions = countryData.regions || {};
 
       Object.entries(regions).forEach(([stateName, stateData]) => {
@@ -509,9 +519,9 @@ async function searchHierarchy(query, limit, type = null) {
               type: 'state',
               id: stateName,
               name: stateName,
-              country: country.name,
+              country: countryItem.name,
               cities: (stateData.cities || []).length,
-              path: `${country.name} > ${stateName}`,
+              path: `${countryItem.name} > ${stateName}`,
             });
           }
         }
@@ -525,16 +535,34 @@ async function searchHierarchy(query, limit, type = null) {
                 type: 'city',
                 id: city.name,
                 name: city.name,
-                country: country.name,
+                country: countryItem.name,
                 state: stateName,
                 coordinates: city.coordinates || null,
                 source: city.source || 'unknown',
-                path: `${country.name} > ${stateName} > ${city.name}`,
+                path: `${countryItem.name} > ${stateName} > ${city.name}`,
               });
             }
           });
         }
       });
+    });
+  }
+
+  if (country || state) {
+    results.sort((a, b) => {
+      if (country) {
+        const aCountryMatch = a.country && a.country.toLowerCase() === country.toLowerCase();
+        const bCountryMatch = b.country && b.country.toLowerCase() === country.toLowerCase();
+        if (aCountryMatch && !bCountryMatch) return -1;
+        if (!aCountryMatch && bCountryMatch) return 1;
+      }
+      if (state) {
+        const aStateMatch = a.state && a.state.toLowerCase() === state.toLowerCase();
+        const bStateMatch = b.state && b.state.toLowerCase() === state.toLowerCase();
+        if (aStateMatch && !bStateMatch) return -1;
+        if (!aStateMatch && bStateMatch) return 1;
+      }
+      return 0;
     });
   }
 
@@ -837,7 +865,7 @@ router.get('/countries/:countryId/states/:stateId/cities', async (req, res) => {
  */
 router.get('/search', async (req, res) => {
   try {
-    const { q, limit: limitStr, type } = req.query;
+    const { q, limit: limitStr, type, country, state } = req.query;
 
     if (!q || typeof q !== 'string' || q.trim().length === 0) {
       return res.status(400).json({
@@ -848,7 +876,7 @@ router.get('/search', async (req, res) => {
     }
 
     const limit = parseInteger(limitStr, 20, 1, 100);
-    const responseData = await searchHierarchy(q, limit, type || null);
+    const responseData = await searchHierarchy(q, limit, type || null, country || null, state || null);
 
     res.json({
       query: q,

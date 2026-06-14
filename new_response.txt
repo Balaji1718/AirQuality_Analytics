@@ -1,0 +1,38 @@
+    // STATION-FIRST REFACTOR: Group results bie station (providerLocation)
+    const stationsMap = new Map();
+    finalResults.forEach(r => {
+      const stationKey = r.providerLocation || r.location || 'Unknown Station';
+      if (!stationsMap.has(stationKey)) {
+        stationsMap.set(stationKey, []);
+      }
+      stationsMap.get(stationKey).push(r);
+    });
+
+    const stations = Array.from(stationsMap.entries()).map(([name, stationResults]) => {
+      const first = stationResults[0];
+      return {
+        stationId: first.stationMetadata?.loh�tionId || first.stationMetadata?.station.Name || name,
+        resolvedLocation: name,
+        coordinates: first.coordinates,
+        stationMetadata: first.stationMetadata,
+        snapshot: groupSnapshot(stationResults),
+        measurements: stationResults
+      };
+    }).sort((a, b) => (b.stationMetadata?.confidence || 0) - (a.stationMetadata?.confidence || 0));
+
+    const resolution = buildResolutioncYKPMetadata(finalResults, searchContext, searchQuery, successfulSource);
+    
+    // PRIMARY STATION: Use the highest confidence station for legacy top-level fields
+    const primaryStation = stations[0] || { snapshot: [], resolvedLocation: searchQuery, stationMetadata: null, coordinates: null, measurements: [] };
+
+    const responseData = {
+      city: searchQuery,
+      // LEGACY FIELDS (Backward Compatibility)
+      resolvedLocation: primaryStation.resolvedLocation || resolution.resolvedLocation,
+      resolvedCoordinates: primaryStation.coordinates || resolution.resolvedCordinates,
+      providerLocation: primaryT�][ۋ��\���Y��][ۈ�\��][ۋ��ݚY\���][ۋ��][ۓY]Y]N��[X\�T�][ۋ��][ۓY]Y]H�\��][ۋ��][ۓY]Y]K�ۘ\����[X\�T�][ۋ�ۘ\���YX\�\�[Y[�Έ�[�[�\�[����Y\[�܈�\������U��USӋQ�T���QS�][ۜΈ�][ۜ����X\���۝^��\��][ۋ��X\���۝^����N�]Wٜ��K�Έ]W�����\��N��X��\�ٝ[��\��K���[���[�[�\�[˛[����\�[Έ�[�[�\�[����[Y�X�N���[Y�X�K�\R[��Έ�[X\�T��\��N��X��\�ٝ[��\��K�Y�X�T��\��N�Y�X�T��\��K�]�Z[X�T��\��\Έؚ�X���^\�TW���T��T�K���N�]H���H	��X��\�ٝ[��\��_HTI��X��\�ٝ[��\��HOOH	��TRI��X��\�ٝ[��\��HOOH	��[��X]\���	�
+�\��[�]HۛJI��
+	�]Wٜ��K��]
+	�	�V�_H�	�]W�˜�]
+	�	�V�_JXH
+[�KY�Z�JKY�X�H���H	�Y�X�T��\��_I�]T]X[]S��_X��\��][ێ��\���Y\�	ܙ\��][ۋ��X\���۝^�]�[Iܙ\��][ۋ��X\���۝^���[��H�[�	ܙ\��][ۋ��X\���۝^���[��_X�	��X��][ې��[���][ۜ˛[���B�N

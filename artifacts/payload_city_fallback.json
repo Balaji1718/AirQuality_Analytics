@@ -1,0 +1,191 @@
+{
+  "city": "Tirunelveli",
+  "resolvedLocation": "Tirunelveli, Tamil Nadu, India (OpenWeather)",
+  "resolvedCoordinates": [
+    8.7139,
+    77.7567
+  ],
+  "providerLocation": "Tirunelveli, Tamil Nadu, India (OpenWeather)",
+  "stationMetadata": {
+    "stationId": "OW_Tirunelveli_8.7139_77.7567",
+    "stationName": "Tirunelveli, Tamil Nadu, India (OpenWeather)",
+    "coordinates": {
+      "lat": 8.7139,
+      "lon": 77.7567
+    },
+    "confidence": 1
+  },
+  "searchContext": {
+    "level": "city",
+    "country": "India",
+    "state": "Tamil Nadu",
+    "regionCandidates": [],
+    "matchedRegion": null,
+    "queryCandidates": [
+      "Tirunelveli, India",
+      "Tirunelveli"
+    ],
+    "source": "OpenWeather"
+  },
+  "from": "2026-06-06T06:23:14.920Z",
+  "to": "2026-06-13T06:23:14.920Z",
+  "source": "OpenWeather",
+  "count": 8,
+  "snapshot": [
+    {
+      "pollutant": "co",
+      "value": 65.15,
+      "unit": "mg/m³"
+    },
+    {
+      "pollutant": "no2",
+      "value": 1.09,
+      "unit": "µg/m³"
+    },
+    {
+      "pollutant": "o3",
+      "value": 31.05,
+      "unit": "µg/m³"
+    },
+    {
+      "pollutant": "so2",
+      "value": 0.47,
+      "unit": "µg/m³"
+    },
+    {
+      "pollutant": "pm25",
+      "value": 1.63,
+      "unit": "µg/m³"
+    },
+    {
+      "pollutant": "pm10",
+      "value": 4.38,
+      "unit": "µg/m³"
+    }
+  ],
+  "localAdvice": "Air quality in Tirunelveli appears good based on 8 measurements from OpenWeather monitoring. Safe for outdoor activities.",
+  "apiInfo": {
+    "primarySource": "OpenWeather",
+    "adviceSource": "Rule-based",
+    "availableSources": [
+      "openaq",
+      "waqi",
+      "openweather"
+    ],
+    "note": "Data from OpenWeather API (current data only) ≡ƒôà, advice from Rule-based",
+    "resolution": "Resolved as city-level query in India"
+  },
+  "stationsCount": 1,
+  "stationsSample": [
+    {
+      "stationId": "OW_Tirunelveli_8.7139_77.7567",
+      "resolvedLocation": "Tirunelveli, Tamil Nadu, India (OpenWeather)",
+      "coordinates": [
+        8.7139,
+        77.7567
+      ],
+      "stationMetadata": {
+        "stationId": "OW_Tirunelveli_8.7139_77.7567",
+        "stationName": "Tirunelveli, Tamil Nadu, India (OpenWeather)",
+        "coordinates": {
+          "lat": 8.7139,
+          "lon": 77.7567
+        },
+        "confidence": 1
+      },
+      "snapshot": [
+        {
+          "pollutant": "co",
+          "value": 65.15,
+          "unit": "mg/m³"
+        },
+        {
+          "pollutant": "no2",
+          "value": 1.09,
+          "unit": "µg/m³"
+        },
+        {
+          "pollutant": "o3",
+          "value": 31.05,
+          "unit": "µg/m³"
+        },
+        {
+          "pollutant": "so2",
+          "value": 0.47,
+          "unit": "µg/m³"
+        },
+        {
+          "pollutant": "pm25",
+          "value": 1.63,
+          "unit": "µg/m³"
+        },
+        {
+          "pollutant": "pm10",
+          "value": 4.38,
+          "unit": "µg/m³"
+        }
+      ],
+      "measurementsCount": 8
+    }
+  ],
+  "resultsSample": [
+    {
+      "pollutant": "co",
+      "parameter": "co",
+      "value": 65.15,
+      "unit": "mg/m³",
+      "dateUTC": "2026-06-13T06:23:17.000Z",
+      "dateLocal": "2026-06-13T06:23:17.000Z",
+      "location": "Tirunelveli, Tamil Nadu, India",
+      "providerLocation": "Tirunelveli, Tamil Nadu, India (OpenWeather)",
+      "stationMetadata": {
+        "stationId": "OW_Tirunelveli_8.7139_77.7567",
+        "stationName": "Tirunelveli, Tamil Nadu, India (OpenWeather)",
+        "coordinates": {
+          "lat": 8.7139,
+          "lon": 77.7567
+        },
+        "confidence": 1
+      },
+      "city": "Tirunelveli",
+      "coordinates": [
+        8.7139,
+        77.7567
+      ],
+      "source": "OpenWeather",
+      "validation": {
+        "confidence": 1,
+        "method": "standard_coordinates"
+      }
+    },
+    {
+      "pollutant": "no",
+      "parameter": "no",
+      "value": 0.08,
+      "unit": "µg/m³",
+      "dateUTC": "2026-06-13T06:23:17.000Z",
+      "dateLocal": "2026-06-13T06:23:17.000Z",
+      "location": "Tirunelveli, Tamil Nadu, India",
+      "providerLocation": "Tirunelveli, Tamil Nadu, India (OpenWeather)",
+      "stationMetadata": {
+        "stationId": "OW_Tirunelveli_8.7139_77.7567",
+        "stationName": "Tirunelveli, Tamil Nadu, India (OpenWeather)",
+        "coordinates": {
+          "lat": 8.7139,
+          "lon": 77.7567
+        },
+        "confidence": 1
+      },
+      "city": "Tirunelveli",
+      "coordinates": [
+        8.7139,
+        77.7567
+      ],
+      "source": "OpenWeather",
+      "validation": {
+        "confidence": 1,
+        "method": "standard_coordinates"
+      }
+    }
+  ]
+}

@@ -1,0 +1,181 @@
+{
+  "city": "Salem",
+  "resolvedLocation": "Salem, Tamil Nadu, India (OpenWeather)",
+  "resolvedCoordinates": [
+    11.6643,
+    78.146
+  ],
+  "providerLocation": "Salem, Tamil Nadu, India (OpenWeather)",
+  "stationMetadata": {
+    "stationId": "OW_Salem_11.6643_78.146",
+    "stationName": "Salem, Tamil Nadu, India (OpenWeather)",
+    "coordinates": {
+      "lat": 11.6643,
+      "lon": 78.146
+    },
+    "confidence": 1
+  },
+  "searchContext": {
+    "level": "city",
+    "country": "India",
+    "state": "Tamil Nadu",
+    "regionCandidates": [],
+    "matchedRegion": null,
+    "queryCandidates": [
+      "Salem, India",
+      "Salem"
+    ],
+    "source": "OpenWeather"
+  },
+  "from": "2026-06-06T06:23:13.102Z",
+  "to": "2026-06-13T06:23:13.102Z",
+  "source": "OpenWeather",
+  "count": 7,
+  "snapshot": [
+    {
+      "pollutant": "no2",
+      "value": 5.6,
+      "unit": "µg/m³"
+    },
+    {
+      "pollutant": "o3",
+      "value": 45.68,
+      "unit": "µg/m³"
+    },
+    {
+      "pollutant": "so2",
+      "value": 1.74,
+      "unit": "µg/m³"
+    },
+    {
+      "pollutant": "pm25",
+      "value": 5.82,
+      "unit": "µg/m³"
+    },
+    {
+      "pollutant": "pm10",
+      "value": 8.4,
+      "unit": "µg/m³"
+    }
+  ],
+  "localAdvice": "Air quality in Salem appears good based on 7 measurements from OpenWeather monitoring. Safe for outdoor activities.",
+  "apiInfo": {
+    "primarySource": "OpenWeather",
+    "adviceSource": "Rule-based",
+    "availableSources": [
+      "openaq",
+      "waqi",
+      "openweather"
+    ],
+    "note": "Data from OpenWeather API (current data only) ≡ƒôà, advice from Rule-based",
+    "resolution": "Resolved as city-level query in India"
+  },
+  "stationsCount": 1,
+  "stationsSample": [
+    {
+      "stationId": "OW_Salem_11.6643_78.146",
+      "resolvedLocation": "Salem, Tamil Nadu, India (OpenWeather)",
+      "coordinates": [
+        11.6643,
+        78.146
+      ],
+      "stationMetadata": {
+        "stationId": "OW_Salem_11.6643_78.146",
+        "stationName": "Salem, Tamil Nadu, India (OpenWeather)",
+        "coordinates": {
+          "lat": 11.6643,
+          "lon": 78.146
+        },
+        "confidence": 1
+      },
+      "snapshot": [
+        {
+          "pollutant": "no2",
+          "value": 5.6,
+          "unit": "µg/m³"
+        },
+        {
+          "pollutant": "o3",
+          "value": 45.68,
+          "unit": "µg/m³"
+        },
+        {
+          "pollutant": "so2",
+          "value": 1.74,
+          "unit": "µg/m³"
+        },
+        {
+          "pollutant": "pm25",
+          "value": 5.82,
+          "unit": "µg/m³"
+        },
+        {
+          "pollutant": "pm10",
+          "value": 8.4,
+          "unit": "µg/m³"
+        }
+      ],
+      "measurementsCount": 7
+    }
+  ],
+  "resultsSample": [
+    {
+      "pollutant": "no",
+      "parameter": "no",
+      "value": 0.81,
+      "unit": "µg/m³",
+      "dateUTC": "2026-06-13T06:23:15.000Z",
+      "dateLocal": "2026-06-13T06:23:15.000Z",
+      "location": "Salem, Tamil Nadu, India",
+      "providerLocation": "Salem, Tamil Nadu, India (OpenWeather)",
+      "stationMetadata": {
+        "stationId": "OW_Salem_11.6643_78.146",
+        "stationName": "Salem, Tamil Nadu, India (OpenWeather)",
+        "coordinates": {
+          "lat": 11.6643,
+          "lon": 78.146
+        },
+        "confidence": 1
+      },
+      "city": "Salem",
+      "coordinates": [
+        11.6643,
+        78.146
+      ],
+      "source": "OpenWeather",
+      "validation": {
+        "confidence": 1,
+        "method": "standard_coordinates"
+      }
+    },
+    {
+      "pollutant": "no2",
+      "parameter": "no2",
+      "value": 5.6,
+      "unit": "µg/m³",
+      "dateUTC": "2026-06-13T06:23:15.000Z",
+      "dateLocal": "2026-06-13T06:23:15.000Z",
+      "location": "Salem, Tamil Nadu, India",
+      "providerLocation": "Salem, Tamil Nadu, India (OpenWeather)",
+      "stationMetadata": {
+        "stationId": "OW_Salem_11.6643_78.146",
+        "stationName": "Salem, Tamil Nadu, India (OpenWeather)",
+        "coordinates": {
+          "lat": 11.6643,
+          "lon": 78.146
+        },
+        "confidence": 1
+      },
+      "city": "Salem",
+      "coordinates": [
+        11.6643,
+        78.146
+      ],
+      "source": "OpenWeather",
+      "validation": {
+        "confidence": 1,
+        "method": "standard_coordinates"
+      }
+    }
+  ]
+}

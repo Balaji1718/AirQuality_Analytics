@@ -1,4 +1,4 @@
-﻿const express = require("express");
+const express = require("express");
 const axios = require("axios");
 const cors = require("cors");
 const path = require("path");
@@ -236,74 +236,532 @@ function findCountryByQuery(query = "") {
   return exact || null;
 }
 
-function buildHierarchicalSearchContext(rawQuery = "") {
-  const query = (rawQuery || '').trim();
-  const country = findCountryByQuery(query);
+function classifySearchIntent(query) {
+  const norm = query.toLowerCase().trim();
+  const { findIndianCity } = require('./utils/locationValidator');
 
+  // 1. Station check (run first to prevent specific station names containing state names, like "Delhi Technological University", from matching state/region checks)
+  const stationKeywords = [
+    'cpcb', 'dpcc', 'spcb', 'aqms', 'monitor', 'station', 'university', 'school',
+    'technological', 'institute', 'hospital', 'airport', 'residential', 'industrial',
+    'high school', 'metro'
+  ];
+  const isStation = stationKeywords.some(keyword => norm.includes(keyword)) || norm.startsWith('@');
+  if (isStation) {
+    return { level: 'station', resolvedName: query };
+  }
+
+  // 2. Country check
+  const country = findCountryByQuery(norm);
   if (country) {
-    const regionalData = regionalCoverageMap[country.name] || null;
-    const regions = regionalData?.regions ? Object.entries(regionalData.regions) : [];
-    const preferredRegions = regions
-      .sort((a, b) => {
-        const aScore = (a[1]?.hasData ? 3 : 0)
-          + (a[1]?.apis?.waqi === 'available' ? 2 : 0)
-          + (a[1]?.apis?.openweather === 'available' ? 1 : 0);
-        const bScore = (b[1]?.hasData ? 3 : 0)
-          + (b[1]?.apis?.waqi === 'available' ? 2 : 0)
-          + (b[1]?.apis?.openweather === 'available' ? 1 : 0);
-        return bScore - aScore;
-      })
-      .slice(0, 8)
-      .map(([regionName]) => regionName);
+    return { level: 'country', entity: country, resolvedName: country.name };
+  }
 
-    const apiQueries = preferredRegions.length > 0
-      ? preferredRegions.map(region => `${region}, ${country.name}`)
-      : [country.name];
+  // 3. State/Region check
+  const stateKeys = [
+    'karnataka', 'tamil nadu', 'maharashtra', 'delhi', 'west bengal', 'telangana', 
+    'rajasthan', 'uttar pradesh', 'haryana', 'gujarat', 'bihar', 'texas', 
+    'california', 'new york', 'illinois', 'florida', 'washington', 'ontario', 
+    'british columbia', 'quebec'
+  ];
+  const matchedState = stateKeys.find(state => norm === state || norm.includes(state));
+  if (matchedState) {
+    const resolvedState = matchedState.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+    return { level: 'region', entity: resolvedState, resolvedName: resolvedState };
+  }
 
+  // 4. City check
+  const indianCity = findIndianCity(norm);
+  if (indianCity) {
+    return { level: 'city', entity: indianCity, resolvedName: indianCity.canonical };
+  }
+
+  // 5. Locality check
+  const knownLocalities = ['hebbal', 'velachery', 'royapuram', 'arumbakkam', 'sion', 'jadavpur', 'hadapsar', 'mundka', 'narela'];
+  const isLocality = knownLocalities.some(loc => norm.includes(loc));
+  if (isLocality) {
+    return { level: 'locality', resolvedName: query };
+  }
+
+  return { level: 'city', resolvedName: query };
+}
+
+async function buildHierarchicalSearchContext(rawQuery = "") {
+  const query = (rawQuery || '').trim();
+  if (!query) {
     return {
       query,
-      level: 'country',
-      country,
-      regionCandidates: preferredRegions,
-      apiQueries,
-      displayLabel: preferredRegions.length > 0
-        ? `${country.name} (representative regions)`
-        : `${country.name} (country-level fallback)`
+      level: 'city',
+      country: null,
+      state: null,
+      apiQueries: [],
+      displayLabel: ''
     };
   }
 
-  // Region/local-area level inference using known regional map.
-  const normalizedQuery = normalizeSearchText(query);
-  for (const [countryName, coverage] of Object.entries(regionalCoverageMap || {})) {
-    const regionEntries = Object.entries(coverage?.regions || {});
-    const matched = regionEntries.find(([regionName]) => normalizeSearchText(regionName) === normalizedQuery);
-    if (matched) {
-      const countryObj = globalCountriesDatabase.find(c => c.name === countryName) || null;
+  const norm = query.toLowerCase();
+  
+  // 1. Station check (run first to prevent specific station names containing state names, like "Delhi Technological University", from matching state/region checks)
+  const stationKeywords = [
+    'cpcb', 'dpcc', 'spcb', 'aqms', 'monitor', 'station', 'university', 'school',
+    'technological', 'institute', 'hospital', 'airport', 'residential', 'industrial',
+    'high school', 'metro'
+  ];
+  const isStation = stationKeywords.some(keyword => norm.includes(keyword)) || norm.startsWith('@');
+  if (isStation) {
+    return {
+      query,
+      level: 'station',
+      country: null,
+      regionCandidates: [],
+      apiQueries: [query],
+      displayLabel: query
+    };
+  }
+
+  const parts = query.split(',').map(p => p.trim()).filter(Boolean);
+  if (parts.length === 0) {
+    return {
+      query,
+      level: 'city',
+      country: null,
+      state: null,
+      apiQueries: [query],
+      displayLabel: query
+    };
+  }
+
+  try {
+    // Country alias map for resolving shorthand/common names to official DB names
+    const COUNTRY_ALIASES = {
+      usa: 'United States', us: 'United States', america: 'United States',
+      'united states of america': 'United States',
+      uk: 'United Kingdom', britain: 'United Kingdom', england: 'United Kingdom',
+      uae: 'United Arab Emirates', emirates: 'United Arab Emirates',
+      russia: 'Russia', russianfederation: 'Russia',
+      southkorea: 'South Korea', korea: 'South Korea',
+      northkorea: 'North Korea',
+      drc: 'Democratic Republic of Congo',
+      ivorycoast: "Cote d'Ivoire",
+      deutschland: 'Germany', allemagne: 'Germany',
+      españa: 'Spain', espana: 'Spain',
+      brasil: 'Brazil',
+      inde: 'India', bharat: 'India',
+      nihon: 'Japan', nippon: 'Japan',
+      zhongguo: 'China',
+    };
+
+    // Helper function to resolve country database lookup (with alias resolution)
+    const resolveDbCountry = async (name) => {
+      const normalized = name.toLowerCase().trim().replace(/\s+/g, '');
+      const aliasResolved = COUNTRY_ALIASES[normalized] || COUNTRY_ALIASES[name.toLowerCase().trim()] || name;
+      const countryQuery = await pool.query(
+        'SELECT * FROM aqi_countries WHERE LOWER(country_name) = LOWER($1) OR LOWER(iso2) = LOWER($1) OR LOWER(iso3) = LOWER($1) LIMIT 1',
+        [aliasResolved]
+      );
+      if (countryQuery.rowCount > 0) return countryQuery.rows[0];
+      // Try original name as fallback (catches partial names like "united states")
+      const fallback = await pool.query(
+        'SELECT * FROM aqi_countries WHERE LOWER(country_name) = LOWER($1) OR LOWER(iso2) = LOWER($1) OR LOWER(iso3) = LOWER($1) LIMIT 1',
+        [name]
+      );
+      return fallback.rowCount > 0 ? fallback.rows[0] : null;
+    };
+
+    // Helper function to resolve state database lookup
+    const resolveDbState = async (name, countryId = null) => {
+      let queryStr = `
+        SELECT s.*, c.country_name, c.iso2 
+        FROM aqi_states s 
+        JOIN aqi_countries c ON s.country_id = c.id 
+        WHERE LOWER(s.state_name) = LOWER($1) OR LOWER(s.state_code) = LOWER($1)
+      `;
+      const params = [name];
+      if (countryId) {
+        queryStr += ' AND s.country_id = $2';
+        params.push(countryId);
+      }
+      queryStr += ' LIMIT 1';
+      const stateQuery = await pool.query(queryStr, params);
+      return stateQuery.rowCount > 0 ? stateQuery.rows[0] : null;
+    };
+
+    // Helper to fetch preferred regions for country
+    const getPreferredRegions = async (countryId, countryName) => {
+      const statesQuery = await pool.query(
+        'SELECT state_name FROM aqi_states WHERE country_id = $1 ORDER BY city_count DESC LIMIT 8',
+        [countryId]
+      );
+      let preferredRegions = statesQuery.rows.map(r => r.state_name);
+      if (preferredRegions.length === 0) {
+        const regionalData = regionalCoverageMap[countryName] || null;
+        const regions = regionalData?.regions ? Object.entries(regionalData.regions) : [];
+        preferredRegions = regions.map(([regionName]) => regionName).slice(0, 8);
+      }
+      return preferredRegions;
+    };
+
+    // Helper to fetch cities in state
+    const getStateCities = async (stateId) => {
+      const citiesQuery = await pool.query(
+        'SELECT city_name FROM aqi_cities WHERE state_id = $1 ORDER BY population DESC, importance_rank DESC LIMIT 8',
+        [stateId]
+      );
+      return citiesQuery.rows.map(r => r.city_name);
+    };
+
+    // CASE 1: Single query part
+    if (parts.length === 1) {
+      const p = parts[0];
+
+      // Check country
+      const dbCountry = await resolveDbCountry(p);
+      if (dbCountry) {
+        const preferredRegions = await getPreferredRegions(dbCountry.id, dbCountry.country_name);
+        const apiQueries = preferredRegions.length > 0
+          ? preferredRegions.map(region => `${region}, ${dbCountry.country_name}`)
+          : [dbCountry.country_name];
+
+        return {
+          query,
+          level: 'country',
+          country: { name: dbCountry.country_name, iso2: dbCountry.iso2, id: dbCountry.id },
+          regionCandidates: preferredRegions,
+          apiQueries,
+          displayLabel: dbCountry.country_name
+        };
+      }
+
+      // Check state
+      const dbState = await resolveDbState(p);
+      if (dbState) {
+        const stateCities = await getStateCities(dbState.id);
+        const apiQueries = stateCities.length > 0
+          ? stateCities.map(city => `${city}, ${dbState.state_name}, ${dbState.country_name}`)
+          : [`${dbState.state_name}, ${dbState.country_name}`, dbState.state_name];
+
+        return {
+          query,
+          level: 'region',
+          country: { name: dbState.country_name, iso2: dbState.iso2, id: dbState.country_id },
+          state: dbState.state_name,
+          regionCandidates: [dbState.state_name],
+          apiQueries,
+          displayLabel: `${dbState.state_name}, ${dbState.country_name}`
+        };
+      }
+
+      // Check locality
+      const knownLocalities = ['hebbal', 'velachery', 'royapuram', 'arumbakkam', 'sion', 'jadavpur', 'hadapsar', 'mundka', 'narela'];
+      const matchedLocality = knownLocalities.find(loc => norm.includes(loc));
+      if (matchedLocality) {
+        const localityToCity = {
+          'hebbal': 'Bengaluru',
+          'velachery': 'Chennai',
+          'royapuram': 'Chennai',
+          'arumbakkam': 'Chennai',
+          'sion': 'Mumbai',
+          'jadavpur': 'Kolkata',
+          'hadapsar': 'Pune',
+          'mundka': 'Delhi',
+          'narela': 'Delhi'
+        };
+        const cityName = localityToCity[matchedLocality];
+        const cityQuery = await pool.query(
+          `SELECT ci.*, s.state_name, c.country_name, c.iso2 
+           FROM aqi_cities ci 
+           LEFT JOIN aqi_states s ON ci.state_id = s.id 
+           JOIN aqi_countries c ON ci.country_id = c.id 
+           WHERE LOWER(ci.city_name) = LOWER($1) 
+           LIMIT 1`,
+          [cityName]
+        );
+        if (cityQuery.rowCount > 0) {
+          const row = cityQuery.rows[0];
+          return {
+            query,
+            level: 'locality',
+            country: { name: row.country_name, iso2: row.iso2, id: row.country_id },
+            state: row.state_name,
+            city: row.city_name,
+            apiQueries: [`${query}, ${row.city_name}, ${row.country_name}`, `${query}, ${row.country_name}`, query],
+            displayLabel: `${query}, ${row.city_name}, ${row.country_name}`
+          };
+        }
+      }
+
+      // Check city
+      const cityQuery = await pool.query(
+        `SELECT ci.*, s.state_name, c.country_name, c.iso2 
+         FROM aqi_cities ci 
+         LEFT JOIN aqi_states s ON ci.state_id = s.id 
+         JOIN aqi_countries c ON ci.country_id = c.id 
+         WHERE LOWER(ci.city_name) = LOWER($1) 
+         ORDER BY 
+           CASE WHEN c.country_name = 'India' THEN 1 ELSE 2 END,
+           ci.importance_rank DESC NULLS LAST, 
+           ci.population DESC NULLS LAST 
+         LIMIT 1`,
+        [p]
+      );
+      if (cityQuery.rowCount > 0) {
+        const row = cityQuery.rows[0];
+        const displayLabel = row.state_name && row.state_name !== 'General Region'
+          ? `${row.city_name}, ${row.state_name}, ${row.country_name}`
+          : `${row.city_name}, ${row.country_name}`;
+
+        const apiQueries = [];
+        if (row.state_name && row.state_name !== 'General Region') {
+          apiQueries.push(`${row.city_name}, ${row.state_name}, ${row.country_name}`);
+        }
+        apiQueries.push(`${row.city_name}, ${row.country_name}`);
+        apiQueries.push(row.city_name);
+
+        return {
+          query,
+          level: 'city',
+          country: { name: row.country_name, iso2: row.iso2, id: row.country_id },
+          state: row.state_name,
+          apiQueries,
+          displayLabel
+        };
+      }
+    }
+
+    // CASE 2: Two query parts (e.g. City, State or City, Country or State, Country)
+    if (parts.length === 2) {
+      // Check if parts[1] is a country
+      const dbCountry = await resolveDbCountry(parts[1]);
+      if (dbCountry) {
+        // Check if parts[0] is a state under this country
+        const dbState = await resolveDbState(parts[0], dbCountry.id);
+        if (dbState) {
+          const stateCities = await getStateCities(dbState.id);
+          const apiQueries = stateCities.length > 0
+            ? stateCities.map(city => `${city}, ${dbState.state_name}, ${dbCountry.country_name}`)
+            : [`${dbState.state_name}, ${dbCountry.country_name}`, dbState.state_name];
+
+          return {
+            query,
+            level: 'region',
+            country: { name: dbCountry.country_name, iso2: dbCountry.iso2, id: dbCountry.id },
+            state: dbState.state_name,
+            regionCandidates: [dbState.state_name],
+            apiQueries,
+            displayLabel: `${dbState.state_name}, ${dbCountry.country_name}`
+          };
+        }
+
+        // Check if parts[0] is a city under this country
+        const cityQuery = await pool.query(
+          `SELECT ci.*, s.state_name, c.country_name, c.iso2 
+           FROM aqi_cities ci 
+           LEFT JOIN aqi_states s ON ci.state_id = s.id 
+           JOIN aqi_countries c ON ci.country_id = c.id 
+           WHERE LOWER(ci.city_name) = LOWER($1) AND ci.country_id = $2 
+           ORDER BY ci.importance_rank DESC NULLS LAST, ci.population DESC NULLS LAST 
+           LIMIT 1`,
+          [parts[0], dbCountry.id]
+        );
+        if (cityQuery.rowCount > 0) {
+          const row = cityQuery.rows[0];
+          const displayLabel = row.state_name && row.state_name !== 'General Region'
+            ? `${row.city_name}, ${row.state_name}, ${row.country_name}`
+            : `${row.city_name}, ${row.country_name}`;
+
+          const apiQueries = [];
+          if (row.state_name && row.state_name !== 'General Region') {
+            apiQueries.push(`${row.city_name}, ${row.state_name}, ${row.country_name}`);
+          }
+          apiQueries.push(`${row.city_name}, ${row.country_name}`);
+          apiQueries.push(row.city_name);
+
+          return {
+            query,
+            level: 'city',
+            country: { name: row.country_name, iso2: row.iso2, id: row.country_id },
+            state: row.state_name,
+            apiQueries,
+            displayLabel
+          };
+        }
+      }
+
+      // Check if parts[1] is a state
+      const dbState = await resolveDbState(parts[1]);
+      if (dbState) {
+        // Check if parts[0] is a city under this state
+        const cityQuery = await pool.query(
+          `SELECT ci.*, s.state_name, c.country_name, c.iso2 
+           FROM aqi_cities ci 
+           LEFT JOIN aqi_states s ON ci.state_id = s.id 
+           JOIN aqi_countries c ON ci.country_id = c.id 
+           WHERE LOWER(ci.city_name) = LOWER($1) AND ci.state_id = $2 
+           ORDER BY ci.importance_rank DESC NULLS LAST, ci.population DESC NULLS LAST 
+           LIMIT 1`,
+          [parts[0], dbState.id]
+        );
+        if (cityQuery.rowCount > 0) {
+          const row = cityQuery.rows[0];
+          const displayLabel = row.state_name && row.state_name !== 'General Region'
+            ? `${row.city_name}, ${row.state_name}, ${row.country_name}`
+            : `${row.city_name}, ${row.country_name}`;
+
+          const apiQueries = [];
+          if (row.state_name && row.state_name !== 'General Region') {
+            apiQueries.push(`${row.city_name}, ${row.state_name}, ${row.country_name}`);
+          }
+          apiQueries.push(`${row.city_name}, ${row.country_name}`);
+          apiQueries.push(row.city_name);
+
+          return {
+            query,
+            level: 'city',
+            country: { name: row.country_name, iso2: row.iso2, id: row.country_id },
+            state: row.state_name,
+            apiQueries,
+            displayLabel
+          };
+        }
+      }
+    }
+
+    // CASE 3: Three or more query parts (e.g. City, State, Country)
+    if (parts.length >= 3) {
+      const dbCountry = await resolveDbCountry(parts[parts.length - 1]);
+      if (dbCountry) {
+        const dbState = await resolveDbState(parts[parts.length - 2], dbCountry.id);
+        if (dbState) {
+          const cityQuery = await pool.query(
+            `SELECT ci.*, s.state_name, c.country_name, c.iso2 
+             FROM aqi_cities ci 
+             LEFT JOIN aqi_states s ON ci.state_id = s.id 
+             JOIN aqi_countries c ON ci.country_id = c.id 
+             WHERE LOWER(ci.city_name) = LOWER($1) AND ci.state_id = $2 AND ci.country_id = $3 
+             ORDER BY ci.importance_rank DESC NULLS LAST, ci.population DESC NULLS LAST 
+             LIMIT 1`,
+            [parts[0], dbState.id, dbCountry.id]
+          );
+          if (cityQuery.rowCount > 0) {
+            const row = cityQuery.rows[0];
+            const displayLabel = `${row.city_name}, ${row.state_name}, ${row.country_name}`;
+            const apiQueries = [
+              `${row.city_name}, ${row.state_name}, ${row.country_name}`,
+              `${row.city_name}, ${row.country_name}`,
+              row.city_name
+            ];
+
+            return {
+              query,
+              level: 'city',
+              country: { name: row.country_name, iso2: row.iso2, id: row.country_id },
+              state: row.state_name,
+              apiQueries,
+              displayLabel
+            };
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error('⚠️ Database context resolution failed, falling back to local matches:', err.message);
+  }
+
+  // Fallback to local files if database lookup was unsuccessful
+  const { findIndianCity } = require('./utils/locationValidator');
+  const queryCity = findIndianCity(query);
+  return {
+    query,
+    level: 'city',
+    country: queryCity ? { name: 'India', iso2: 'IN' } : null,
+    state: queryCity?.state || null,
+    apiQueries: queryCity ? [`${queryCity.canonical}, India`, queryCity.canonical] : [query],
+    displayLabel: queryCity ? `${queryCity.canonical}, India` : query
+  };
+}
+
+function getMeasurementCoordinates(item) {
+  if (!item) return null;
+  if (item.coordinates) {
+    if (Array.isArray(item.coordinates)) {
+      return { lat: coerceNumber(item.coordinates[0]), lon: coerceNumber(item.coordinates[1]) };
+    }
+    if (typeof item.coordinates === 'object') {
       return {
-        query,
-        level: 'region',
-        country: countryObj,
-        matchedRegion: matched[0],
-        regionCandidates: [matched[0]],
-        apiQueries: [`${matched[0]}, ${countryName}`, matched[0]],
-        displayLabel: `${matched[0]}, ${countryName}`
+        lat: coerceNumber(item.coordinates.latitude ?? item.coordinates.lat),
+        lon: coerceNumber(item.coordinates.longitude ?? item.coordinates.lon ?? item.coordinates.lng)
       };
     }
   }
+  if (item.latitude !== undefined && item.longitude !== undefined) {
+    return { lat: coerceNumber(item.latitude), lon: coerceNumber(item.longitude) };
+  }
+  return null;
+}
+
+function buildResolvedLocationMetadata(results, searchContext, fallbackQuery, source) {
+  const first = (results || []).find(item => item && (item.location || item.city || item.country || item.providerLocation)) || {};
+  const location = first.providerLocation || first.location || '';
+  const city = first.city || '';
+  const country = first.country || searchContext.country?.name || '';
+  const state = first.state || searchContext.state || '';
+  const coordinates = getMeasurementCoordinates(first);
+
+  const candidateLabel = normalizeLocation(
+    [first.providerLocation || location || city || searchContext.displayLabel || fallbackQuery, state, country]
+      .filter(Boolean)
+      .join(', ')
+  );
 
   return {
-    query,
-    level: 'local',
-    country: null,
-    regionCandidates: [],
-    apiQueries: [query],
-    displayLabel: query
+    resolvedLocation: searchContext.level === 'country'
+      ? (searchContext.displayLabel || candidateLabel || fallbackQuery)
+      : (candidateLabel || searchContext.displayLabel || fallbackQuery),
+    resolvedCoordinates: coordinates,
+    providerLocation: location || null,
+    stationMetadata: first.stationMetadata || null,
+    searchContext: {
+      level: searchContext.level,
+      country: searchContext.country?.name || country || null,
+      state: state || null,
+      regionCandidates: searchContext.regionCandidates || [],
+      matchedRegion: searchContext.matchedRegion || null,
+      queryCandidates: searchContext.apiQueries || [],
+      source: source || null,
+    },
   };
 }
 
 function groupSnapshot(results) {
-  const map = {};
+  if (!Array.isArray(results) || results.length === 0) return [];
+
+  // Group by station to identify if there are multiple stations
+  const stationsMap = new Map();
   results.forEach(r => {
+    const stationKey = r.providerLocation || r.location || 'Unknown Station';
+    if (!stationsMap.has(stationKey)) {
+      stationsMap.set(stationKey, []);
+    }
+    stationsMap.get(stationKey).push(r);
+  });
+
+  const stationEntries = Array.from(stationsMap.entries());
+  let targetResults = results;
+
+  if (stationEntries.length > 1) {
+    // Sort by confidence or measurement count to find the primary station
+    stationEntries.sort((a, b) => {
+      const aConf = a[1][0]?.stationMetadata?.confidence || 0;
+      const bConf = b[1][0]?.stationMetadata?.confidence || 0;
+      if (bConf !== aConf) return bConf - aConf;
+      return b[1].length - a[1].length;
+    });
+    targetResults = stationEntries[0][1];
+    console.log(`📊 groupSnapshot: detected ${stationEntries.length} stations. Using primary station "${stationEntries[0][0]}" to prevent averaging unrelated stations.`);
+  }
+
+  const map = {};
+  targetResults.forEach(r => {
     const key = normalizePollutant(r.pollutant);
     if (!key) return;
     if (!map[key]) map[key] = { sum: 0, count: 0, unit: r.unit };
@@ -1332,7 +1790,9 @@ async function getCoordinatesForCity(cityName) {
       return {
         lat: response.data[0].lat,
         lon: response.data[0].lon,
-        country: response.data[0].country
+        country: response.data[0].country,
+        state: response.data[0].state || null,
+        name: response.data[0].name || null
       };
     }
   } catch (err) {
@@ -1354,110 +1814,149 @@ async function getCoordinatesForCity(cityName) {
     'caracas': { lat: 10.4806, lon: -66.9036, country: 'VE' },
     'havana': { lat: 23.1136, lon: -82.3666, country: 'CU' },
     'beirut': { lat: 33.8938, lon: 35.5018, country: 'LB' },
-    'damascus': { lat: 33.5138, lon: 36.2765, country: 'SY' }
+    'damascus': { lat: 33.5138, lon: 36.2765, country: 'SY' },
+    'salem': { lat: 11.6643, lon: 78.1460, country: 'IN', state: 'Tamil Nadu', name: 'Salem' },
+    'tirunelveli': { lat: 8.7139, lon: 77.7567, country: 'IN', state: 'Tamil Nadu', name: 'Tirunelveli' }
   };
   
   const cityKey = cityName.toLowerCase().trim();
   return cityCoords[cityKey] || null;
 }
 
-async function fetchFromWAQI(cityName) {
+async function fetchFromWAQI(cityName, targetCountry = null, targetState = null) {
   const { validateLocationMatch, getStandardCoordinates } = require('./utils/locationValidator');
   
   try {
-    // Get validated coordinates for the city
-    const standardCoords = getStandardCoordinates(cityName);
-    let url;
+    console.log(`🔍 Using WAQI search endpoint for station discovery: ${cityName}`);
+    const searchUrl = `${API_SOURCES.waqi.baseUrl}/search/?keyword=${encodeURIComponent(cityName)}&token=${API_SOURCES.waqi.token}`;
+    const searchResponse = await axios.get(searchUrl);
     
-    if (standardCoords) {
-      // Use validated coordinates for geo-based search
-      url = `${API_SOURCES.waqi.baseUrl}/feed/geo:${standardCoords.lat};${standardCoords.lon}/?token=${API_SOURCES.waqi.token}`;
-      console.log(`🎯 Using validated coordinates for ${cityName}: ${standardCoords.lat}, ${standardCoords.lon}`);
-    } else {
-      // Fallback to city search for non-Indian cities
-      url = `${API_SOURCES.waqi.baseUrl}/feed/${encodeURIComponent(cityName)}/?token=${API_SOURCES.waqi.token}`;
-      console.log(`🔍 Using city search for ${cityName}`);
+    let stationsToFetch = [];
+    if (searchResponse.data && searchResponse.data.status === "ok" && Array.isArray(searchResponse.data.data)) {
+      stationsToFetch = searchResponse.data.data;
     }
     
-    const response = await axios.get(url);
-    
-    if (response.data && response.data.status === "ok" && response.data.data) {
-      const data = response.data.data;
-      
-      // Validate location match before processing data
-      const locationValidation = validateLocationMatch(
-        cityName, 
-        data.city?.name, 
-        data.city?.geo ? { lat: data.city.geo[0], lon: data.city.geo[1] } : null
-      );
-      
-      if (!locationValidation.isValid) {
-        console.log(`❌ WAQI location mismatch for ${cityName}: ${locationValidation.reason}`);
-        return { 
-          success: false, 
-          error: `Location mismatch: ${locationValidation.reason}`,
-          validation: locationValidation
-        };
+    // If no stations found via search, try direct feed fallback
+    if (stationsToFetch.length === 0) {
+      console.log(`⚠️ No stations found via search, falling back to direct feed lookup for ${cityName}`);
+      const directUrl = `${API_SOURCES.waqi.baseUrl}/feed/${encodeURIComponent(cityName)}/?token=${API_SOURCES.waqi.token}`;
+      const directResponse = await axios.get(directUrl);
+      if (directResponse.data && directResponse.data.status === "ok" && directResponse.data.data) {
+        stationsToFetch = [directResponse.data.data];
       }
-      
-      console.log(`✅ WAQI location validated for ${cityName} (confidence: ${locationValidation.confidence.toFixed(2)})`);
-      
-      const results = [];
-      
-      // Convert WAQI format to our standard format with validation
-      if (data.iaqi) {
-        Object.keys(data.iaqi).forEach(pollutant => {
-          if (data.iaqi[pollutant] && data.iaqi[pollutant].v !== undefined) {
-            const value = data.iaqi[pollutant].v;
-            
-            // Validate pollutant values are reasonable
-            if (value >= 0 && value <= 500) { // AQI range validation
-              results.push({
-                pollutant: pollutant,
-                parameter: pollutant,
-                value: value,
-                unit: 'AQI', // WAQI uses AQI scale
-                dateUTC: data.time?.s || new Date().toISOString(),
-                dateLocal: data.time?.s || new Date().toISOString(),
-                location: `${locationValidation.normalized.city}, ${locationValidation.normalized.country}`,
-                city: locationValidation.normalized.city,
-                coordinates: locationValidation.normalized.coordinates ? 
-                  [locationValidation.normalized.coordinates.lat, locationValidation.normalized.coordinates.lon] : null,
-                source: 'WAQI',
-                validation: {
-                  confidence: locationValidation.confidence,
-                  method: standardCoords ? 'coordinates' : 'city_search'
-                }
-              });
-            }
+    }
+    
+    if (stationsToFetch.length === 0) {
+      return { success: false, error: 'No stations found from WAQI API' };
+    }
+    
+    // Fetch feed details in parallel for top N stations (e.g., top 5)
+    const maxStationsToFetch = 5;
+    const topStations = stationsToFetch.slice(0, maxStationsToFetch);
+    const results = [];
+    
+    const fetchPromises = topStations.map(async (stationInfo) => {
+      try {
+        const feedId = stationInfo.uid !== undefined ? `@${stationInfo.uid}` : stationInfo.idx !== undefined ? `@${stationInfo.idx}` : null;
+        let url;
+        if (feedId) {
+          url = `${API_SOURCES.waqi.baseUrl}/feed/${feedId}/?token=${API_SOURCES.waqi.token}`;
+        } else if (stationInfo.city?.name) {
+          url = `${API_SOURCES.waqi.baseUrl}/feed/${encodeURIComponent(stationInfo.city.name)}/?token=${API_SOURCES.waqi.token}`;
+        } else if (stationInfo.station?.name) {
+          url = `${API_SOURCES.waqi.baseUrl}/feed/${encodeURIComponent(stationInfo.station.name)}/?token=${API_SOURCES.waqi.token}`;
+        } else {
+          return;
+        }
+        
+        const response = await axios.get(url);
+        if (response.data && response.data.status === "ok" && response.data.data) {
+          const data = response.data.data;
+          const stationName = data.city?.name || stationInfo.station?.name || `Station ${stationInfo.uid || stationInfo.idx}`;
+          const stationGeo = data.city?.geo || stationInfo.station?.geo || null;
+          
+          const locationValidation = validateLocationMatch(
+            cityName,
+            stationName,
+            stationGeo ? { lat: stationGeo[0], lon: stationGeo[1] } : null,
+            null,
+            targetCountry,
+            targetState
+          );
+          
+          if (!locationValidation.isValid) {
+            console.log(`❌ WAQI location mismatch for ${cityName} against station "${stationName}": ${locationValidation.reason}`);
+            return;
           }
-        });
+          
+          const stationId = data.idx || stationInfo.uid || stationInfo.idx || 'Unknown';
+          const coordinatesObj = locationValidation.normalized.coordinates;
+          const coordinatesArr = coordinatesObj ? [coordinatesObj.lat, coordinatesObj.lon] : null;
+          
+          const stationMetadata = {
+            stationId: stationId,
+            stationName: stationName,
+            coordinates: coordinatesObj,
+            confidence: locationValidation.confidence
+          };
+          
+          if (data.iaqi) {
+            Object.keys(data.iaqi).forEach(pollutant => {
+              if (data.iaqi[pollutant] && data.iaqi[pollutant].v !== undefined) {
+                const value = data.iaqi[pollutant].v;
+                if (value >= 0 && value <= 500) {
+                  results.push({
+                    pollutant: pollutant,
+                    parameter: pollutant,
+                    value: value,
+                    unit: 'AQI',
+                    dateUTC: data.time?.s || new Date().toISOString(),
+                    dateLocal: data.time?.s || new Date().toISOString(),
+                    location: `${locationValidation.normalized.city}, ${locationValidation.normalized.country}`,
+                    providerLocation: stationName,
+                    stationMetadata: stationMetadata,
+                    city: locationValidation.normalized.city,
+                    coordinates: coordinatesArr,
+                    source: 'WAQI',
+                    validation: {
+                      confidence: locationValidation.confidence,
+                      method: 'keyword_search'
+                    }
+                  });
+                }
+              }
+            });
+          }
+        }
+      } catch (feedErr) {
+        console.log(`Failed fetching details for WAQI station ${stationInfo.uid || stationInfo.idx}: ${feedErr.message}`);
       }
-      
-      if (results.length === 0) {
-        return { success: false, error: 'No valid pollutant data found' };
-      }
-      
-      return {
-        success: true,
-        source: 'WAQI',
-        city: locationValidation.normalized.city,
-        country: locationValidation.normalized.country,
-        results: results,
-        aqi: data.aqi,
-        coordinates: locationValidation.normalized.coordinates,
-        validation: locationValidation
-      };
+    });
+    
+    await Promise.all(fetchPromises);
+    
+    if (results.length === 0) {
+      return { success: false, error: 'No valid pollutant data found' };
     }
+    
+    // Find representative coordinates
+    const firstWithCoords = results.find(r => r.coordinates);
+    const coordinates = firstWithCoords ? { lat: firstWithCoords.coordinates[0], lon: firstWithCoords.coordinates[1] } : null;
+    
+    return {
+      success: true,
+      source: 'WAQI',
+      city: cityName,
+      results: results,
+      coordinates: coordinates
+    };
   } catch (err) {
     console.log(`❌ WAQI API failed for ${cityName}:`, err.message);
     return { success: false, error: err.message };
   }
-  
-  return { success: false, error: 'No data found from WAQI API' };
 }
 
-async function fetchFromOpenWeather(cityName) {
+async function fetchFromOpenWeather(cityName, targetCountry = null, targetState = null) {
   const { validateLocationMatch, getStandardCoordinates, isWithinIndiaBounds } = require('./utils/locationValidator');
   
   try {
@@ -1484,7 +1983,7 @@ async function fetchFromOpenWeather(cityName) {
       coords = standardCoords;
     }
     
-    const url = `${API_SOURCES.openweather.baseUrl}/air_pollution?lat=${coords.lat}&lon=${coords.lon}&appid=${process.env.OPENWEATHER_API_KEY}`;
+    const url = `${API_SOURCES.openweather.baseUrl}?lat=${coords.lat}&lon=${coords.lon}&appid=${process.env.OPENWEATHER_API_KEY}`;
     console.log(`🌤️  Fetching OpenWeather data for ${cityName} at ${coords.lat}, ${coords.lon}`);
     
     const response = await axios.get(url);
@@ -1492,11 +1991,25 @@ async function fetchFromOpenWeather(cityName) {
     if (response.data && response.data.list && response.data.list.length > 0) {
       const data = response.data.list[0];
       
+      let resolvedCountry = targetCountry;
+      let resolvedState = targetState;
+      
+      if (!resolvedCountry && coords.country) {
+        const countryObj = findCountryByQuery(coords.country);
+        resolvedCountry = countryObj ? countryObj.name : coords.country;
+      }
+      if (!resolvedState && coords.state) {
+        resolvedState = coords.state;
+      }
+
       // Validate location match
       const locationValidation = validateLocationMatch(
         cityName, 
-        cityName, // OpenWeather doesn't return city name, use original
-        coords
+        coords.name || cityName, 
+        coords,
+        null,
+        resolvedCountry,
+        resolvedState
       );
       
       if (!locationValidation.isValid) {
@@ -1525,6 +2038,7 @@ async function fetchFromOpenWeather(cityName) {
             const maxValue = maxValues[normalizedPollutant] || 1000;
             
             if (value <= maxValue) {
+              const displayLocation = `${locationValidation.normalized.city}, ${locationValidation.normalized.state ? locationValidation.normalized.state + ', ' : ''}${locationValidation.normalized.country}`;
               results.push({
                 pollutant: normalizedPollutant,
                 parameter: normalizedPollutant,
@@ -1532,7 +2046,14 @@ async function fetchFromOpenWeather(cityName) {
                 unit: unit,
                 dateUTC: new Date(data.dt * 1000).toISOString(),
                 dateLocal: new Date(data.dt * 1000).toISOString(),
-                location: `${locationValidation.normalized.city}, ${locationValidation.normalized.country}`,
+                location: displayLocation,
+                providerLocation: `${displayLocation} (OpenWeather)`,
+                stationMetadata: {
+                  stationId: `OW_${locationValidation.normalized.city}_${coords.lat}_${coords.lon}`,
+                  stationName: `${displayLocation} (OpenWeather)`,
+                  coordinates: coords,
+                  confidence: locationValidation.confidence
+                },
                 city: locationValidation.normalized.city,
                 coordinates: [coords.lat, coords.lon],
                 source: 'OpenWeather',
@@ -2330,10 +2851,16 @@ function filterRecentData(results, maxYearsBack = 2) {
 app.post("/api/hybrid-measurements", async (req, res) => {
   try {
     const body = req.body || {};
-    const cityName = (body.city || "").trim();
+    const cityName = (body.city || body.state || body.country || "").trim();
     if (!cityName) return res.status(400).json({ error: "city is required" });
 
-    const searchContext = buildHierarchicalSearchContext(cityName);
+    const searchContext = await buildHierarchicalSearchContext(cityName);
+    if (body.country && !searchContext.country) {
+      searchContext.country = findCountryByQuery(body.country);
+    }
+    if (body.state && !searchContext.state) {
+      searchContext.state = body.state;
+    }
     const queryCandidates = searchContext.apiQueries && searchContext.apiQueries.length
       ? searchContext.apiQueries
       : [cityName];
@@ -2462,17 +2989,21 @@ app.post("/api/hybrid-measurements", async (req, res) => {
       let paramCount = 0;
 
       // City/country hierarchical filter
-      paramCount++;
-      dbQuery += ` AND (LOWER(city) LIKE LOWER($${paramCount})`;
-      dbValues.push(`%${cityName}%`);
-
-      if (searchContext.country?.name) {
+      if (searchContext.level === 'country') {
         paramCount++;
-        dbQuery += ` OR LOWER(country) LIKE LOWER($${paramCount})`;
-        dbValues.push(`%${searchContext.country.name}%`);
-      }
+        dbQuery += ` AND LOWER(country) LIKE LOWER($${paramCount})`;
+        dbValues.push(`%${cityName}%`);
+      } else {
+        paramCount++;
+        dbQuery += ` AND LOWER(city) LIKE LOWER($${paramCount})`;
+        dbValues.push(`%${cityName}%`);
 
-      dbQuery += `)`;
+        if (searchContext.country?.name) {
+          paramCount++;
+          dbQuery += ` AND LOWER(country) LIKE LOWER($${paramCount})`;
+          dbValues.push(`%${searchContext.country.name}%`);
+        }
+      }
 
       // Date filters
       if (fromYear || toYear) {
@@ -2500,36 +3031,27 @@ app.post("/api/hybrid-measurements", async (req, res) => {
         // Convert database records to API format
         const dbResults = [];
         dbResult.rows.forEach(row => {
-          if (row.pm25 !== null) dbResults.push({
-            pollutant: 'pm25', parameter: 'pm25', value: parseFloat(row.pm25), 
-            unit: 'µg/m³', dateUTC: row.recorded_at, location: `${row.city}, ${row.country || 'India'}`,
-            city: row.city, coordinates: row.latitude && row.longitude ? [row.latitude, row.longitude] : null
-          });
-          if (row.pm10 !== null) dbResults.push({
-            pollutant: 'pm10', parameter: 'pm10', value: parseFloat(row.pm10), 
-            unit: 'µg/m³', dateUTC: row.recorded_at, location: `${row.city}, ${row.country || 'India'}`,
-            city: row.city, coordinates: row.latitude && row.longitude ? [row.latitude, row.longitude] : null
-          });
-          if (row.no2 !== null) dbResults.push({
-            pollutant: 'no2', parameter: 'no2', value: parseFloat(row.no2), 
-            unit: 'µg/m³', dateUTC: row.recorded_at, location: `${row.city}, ${row.country || 'India'}`,
-            city: row.city, coordinates: row.latitude && row.longitude ? [row.latitude, row.longitude] : null
-          });
-          if (row.so2 !== null) dbResults.push({
-            pollutant: 'so2', parameter: 'so2', value: parseFloat(row.so2), 
-            unit: 'µg/m³', dateUTC: row.recorded_at, location: `${row.city}, ${row.country || 'India'}`,
-            city: row.city, coordinates: row.latitude && row.longitude ? [row.latitude, row.longitude] : null
-          });
-          if (row.co !== null) dbResults.push({
-            pollutant: 'co', parameter: 'co', value: parseFloat(row.co), 
-            unit: 'mg/m³', dateUTC: row.recorded_at, location: `${row.city}, ${row.country || 'India'}`,
-            city: row.city, coordinates: row.latitude && row.longitude ? [row.latitude, row.longitude] : null
-          });
-          if (row.o3 !== null) dbResults.push({
-            pollutant: 'o3', parameter: 'o3', value: parseFloat(row.o3), 
-            unit: 'µg/m³', dateUTC: row.recorded_at, location: `${row.city}, ${row.country || 'India'}`,
-            city: row.city, coordinates: row.latitude && row.longitude ? [row.latitude, row.longitude] : null
-          });
+          const stationName = `${row.city}, ${row.country || 'India'}`;
+          const stationMetadata = {
+            stationId: row.city,
+            stationName: stationName,
+            coordinates: row.latitude && row.longitude ? { lat: coerceNumber(row.latitude), lon: coerceNumber(row.longitude) } : null,
+            confidence: 0.9
+          };
+          const baseResult = {
+            city: row.city,
+            coordinates: row.latitude && row.longitude ? [coerceNumber(row.latitude), coerceNumber(row.longitude)] : null,
+            dateUTC: row.recorded_at,
+            location: stationName,
+            providerLocation: stationName,
+            stationMetadata: stationMetadata
+          };
+          if (row.pm25 !== null) dbResults.push({ ...baseResult, pollutant: 'pm25', parameter: 'pm25', value: parseFloat(row.pm25), unit: 'µg/m³' });
+          if (row.pm10 !== null) dbResults.push({ ...baseResult, pollutant: 'pm10', parameter: 'pm10', value: parseFloat(row.pm10), unit: 'µg/m³' });
+          if (row.no2 !== null) dbResults.push({ ...baseResult, pollutant: 'no2', parameter: 'no2', value: parseFloat(row.no2), unit: 'µg/m³' });
+          if (row.so2 !== null) dbResults.push({ ...baseResult, pollutant: 'so2', parameter: 'so2', value: parseFloat(row.so2), unit: 'µg/m³' });
+          if (row.co !== null) dbResults.push({ ...baseResult, pollutant: 'co', parameter: 'co', value: parseFloat(row.co), unit: 'mg/m³' });
+          if (row.o3 !== null) dbResults.push({ ...baseResult, pollutant: 'o3', parameter: 'o3', value: parseFloat(row.o3), unit: 'µg/m³' });
         });
 
         if (dbResults.length > 0) {
@@ -2584,19 +3106,44 @@ app.post("/api/hybrid-measurements", async (req, res) => {
               axios.get(url, { 
                 headers: HEADERS,
                 timeout: REQUEST_TIMEOUT
-              }).then(response => ({
-                success: true,
-                location: location.name,
-                data: (response.data.results || []).map(r => ({
-                  pollutant: r.parameter?.name || 'unknown',
-                  value: r.value,
-                  unit: r.parameter?.units || '',
-                  dateLocal: r.period?.datetimeTo?.local,
-                  dateUTC: r.period?.datetimeTo?.utc,
+              }).then(response => {
+                const { validateLocationMatch } = require('./utils/locationValidator');
+                const locationValidation = validateLocationMatch(
+                  cityName,
+                  location.name,
+                  location.coordinates ? { lat: location.coordinates.latitude, lon: location.coordinates.longitude } : null,
+                  null,
+                  getLocationCountryName(location)
+                );
+                
+                if (!locationValidation.isValid) {
+                  console.log(`❌ OpenAQ location mismatch for ${cityName} against location "${location.name}": ${locationValidation.reason}`);
+                  return { success: true, location: location.name, data: [] };
+                }
+                
+                return {
+                  success: true,
                   location: location.name,
-                  source: 'OpenAQ'
-                }))
-              })).catch(err => ({
+                  data: (response.data.results || []).map(r => ({
+                    pollutant: r.parameter?.name || 'unknown',
+                    value: r.value,
+                    unit: r.parameter?.units || '',
+                    dateLocal: r.period?.datetimeTo?.local,
+                    dateUTC: r.period?.datetimeTo?.utc,
+                    location: location.name,
+                    providerLocation: location.name,
+                    country: getLocationCountryName(location),
+                    coordinates: location.coordinates ? [coerceNumber(location.coordinates.latitude), coerceNumber(location.coordinates.longitude)] : null,
+                    stationMetadata: {
+                      stationId: location.id,
+                      stationName: location.name,
+                      coordinates: location.coordinates ? { lat: coerceNumber(location.coordinates.latitude), lon: coerceNumber(location.coordinates.longitude) } : null,
+                      confidence: locationValidation.confidence
+                    },
+                    source: 'OpenAQ'
+                  }))
+                };
+              }).catch(err => ({
                 success: false,
                 error: err.message
               }))
@@ -2628,7 +3175,7 @@ app.post("/api/hybrid-measurements", async (req, res) => {
     if (results.length === 0) {
       console.log(`Trying WAQI for ${searchContext.displayLabel}...`);
       for (const candidate of queryCandidates.slice(0, 5)) {
-        const waqiResult = await fetchFromWAQI(candidate);
+        const waqiResult = await fetchFromWAQI(candidate, searchContext.country?.name, searchContext.state);
         if (waqiResult.success && waqiResult.results.length > 0) {
           successfulSource = 'WAQI';
           results.push(...waqiResult.results.map(r => ({
@@ -2638,7 +3185,7 @@ app.post("/api/hybrid-measurements", async (req, res) => {
 
           // Note if user requested historical data but we're using current data
           if (fromYear && fromYear < new Date().getFullYear()) {
-            console.log(`ΓÜá∩╕Å User requested ${fromYear} data, but WAQI only provides current data`);
+            console.log(`⚠️ User requested ${fromYear} data, but WAQI only provides current data`);
           }
           break;
         }
@@ -2650,7 +3197,7 @@ app.post("/api/hybrid-measurements", async (req, res) => {
     if (results.length === 0) {
       console.log(`Trying OpenWeather for ${searchContext.displayLabel}...`);
       for (const candidate of queryCandidates.slice(0, 6)) {
-        const owResult = await fetchFromOpenWeather(candidate);
+        const owResult = await fetchFromOpenWeather(candidate, searchContext.country?.name, searchContext.state);
         if (owResult.success && owResult.results.length > 0) {
           successfulSource = 'OpenWeather';
           results.push(...owResult.results.map(r => ({
@@ -2667,7 +3214,7 @@ app.post("/api/hybrid-measurements", async (req, res) => {
 
       // Country-level coordinate fallback when no region/city query succeeded.
       if (results.length === 0 && searchContext.country?.name) {
-        const fallbackOw = await fetchFromOpenWeather(searchContext.country.name);
+        const fallbackOw = await fetchFromOpenWeather(searchContext.country.name, searchContext.country?.name, searchContext.state);
         if (fallbackOw.success && fallbackOw.results.length > 0) {
           successfulSource = 'OpenWeather';
           results.push(...fallbackOw.results.map(r => ({
@@ -2788,22 +3335,62 @@ app.post("/api/hybrid-measurements", async (req, res) => {
         ? ` (no recent records available; showing latest available historical measurements)`
         : userRequestedHistoricalData ? ` (showing historical data from ${fromYear})` : "";
 
+    // STATION-FIRST REFACTOR: Group results by station (providerLocation)
+    const stationsMap = new Map();
+    finalResults.forEach(r => {
+      const stationKey = r.providerLocation || r.location || 'Unknown Station';
+      if (!stationsMap.has(stationKey)) {
+        stationsMap.set(stationKey, []);
+      }
+      stationsMap.get(stationKey).push(r);
+    });
+
+    const stations = Array.from(stationsMap.entries()).map(([name, stationResults]) => {
+      const first = stationResults[0];
+      return {
+        stationId: first.stationMetadata?.stationId || first.stationMetadata?.locationId || name,
+        resolvedLocation: name,
+        coordinates: first.coordinates,
+        stationMetadata: first.stationMetadata,
+        snapshot: groupSnapshot(stationResults),
+        measurements: stationResults
+      };
+    }).sort((a, b) => (b.stationMetadata?.confidence || 0) - (a.stationMetadata?.confidence || 0));
+
+    const resolution = buildResolvedLocationMetadata(finalResults, searchContext, cityName, successfulSource);
+    
+    // PRIMARY STATION: Use the highest confidence station for legacy top-level fields
+    const primaryStation = stations[0] || { snapshot: [], resolvedLocation: cityName, stationMetadata: null, coordinates: null, measurements: [] };
+
+    let resolvedLocation = primaryStation.resolvedLocation || resolution.resolvedLocation;
+    let resolvedCoordinates = primaryStation.coordinates || resolution.resolvedCoordinates;
+    let providerLocation = primaryStation.providerLocation || resolution.providerLocation || primaryStation.resolvedLocation || null;
+    let snapshot = primaryStation.snapshot;
+
+    if (searchContext.level === 'country' || searchContext.level === 'region') {
+      resolvedLocation = searchContext.displayLabel;
+      providerLocation = `Aggregated ${searchContext.level === 'country' ? 'Country' : 'State'} Overview`;
+      snapshot = groupSnapshot(finalResults);
+      if (searchContext.level === 'country' && searchContext.country?.coordinates) {
+        resolvedCoordinates = searchContext.country.coordinates;
+      }
+    }
+
     const responseData = {
       city: cityName,
-      resolvedLocation: searchContext.displayLabel,
-      searchContext: {
-        level: searchContext.level,
-        country: searchContext.country?.name || null,
-        regionCandidates: searchContext.regionCandidates || [],
-        matchedRegion: searchContext.matchedRegion || null
-      },
+      // LEGACY FIELDS (Backward Compatibility)
+      resolvedLocation: resolvedLocation,
+      resolvedCoordinates: resolvedCoordinates,
+      providerLocation: providerLocation,
+      stationMetadata: primaryStation.stationMetadata || resolution.stationMetadata,
+      searchContext: resolution.searchContext,
       from: date_from,
       to: date_to,
       source: successfulSource,
       count: finalResults.length,
       results: finalResults,
       measurements: finalResults, // Add measurements field for chart processing
-      snapshot: groupSnapshot(finalResults), // Add snapshot for table display
+      snapshot: snapshot, // Add snapshot of primary station to avoid averaging all stations
       localAdvice: localAdvice,
       apiInfo: {
         primarySource: successfulSource,
@@ -2811,7 +3398,8 @@ app.post("/api/hybrid-measurements", async (req, res) => {
         availableSources: Object.keys(API_SOURCES),
         note: `Data from ${successfulSource} API${successfulSource === 'WAQI' || successfulSource === 'OpenWeather' ? ' (current data only)' : ` (${date_from.split('T')[0]} to ${date_to.split('T')[0]})`} ≡ƒôà, advice from ${adviceSource}${dataQualityNote}`,
         resolution: `Resolved as ${searchContext.level}-level query${searchContext.country?.name ? ` in ${searchContext.country.name}` : ''}`
-      }
+      },
+      stations: stations
     };
 
     // Cache the response for future requests

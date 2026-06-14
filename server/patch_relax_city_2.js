@@ -1,0 +1,12 @@
+const fs = require('fs');
+const p = 'server/index.js';
+let s = fs.readFileSync(p,'utf8');
+const re = /const cityName = \(body\.city \|\| ""\)\.trim\(\);\s*if \(!cityName\) return res\.status\(400\)\.json\(\{ error: "city is required" \}\);/g;
+const replacement = `const cityName = (body.city || "").trim();
+    const country = (body.country || "").trim();
+    const state = (body.state || "").trim();
+    if (!cityName && !country) return res.status(400).json({ error: "city or country is required" });`;
+const m = s.match(re) || [];
+s = s.replace(re, replacement);
+fs.writeFileSync(p, s, 'utf8');
+console.log('REPLACED_COUNT:', m.length);

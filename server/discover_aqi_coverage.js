@@ -12,6 +12,7 @@ const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 require('dotenv').config();
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 const OPENAQ_KEY = process.env.OPENAQ_API_KEY;
 const OPENWEATHER_KEY = process.env.OPENWEATHER_API_KEY;
@@ -55,6 +56,70 @@ const log = (msg, type = 'info') => {
   coverage.discovery_log.push({ timestamp: new Date().toISOString(), message: msg, type });
 };
 
+function normalizeText(value = '') {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+function getOpenAQCountryCode(location) {
+  if (location?.country && typeof location.country === 'object') {
+    return location.country.code || null;
+  }
+  if (typeof location?.country === 'string') {
+    return location.country;
+  }
+  return null;
+}
+
+function isUnknownLocality(value) {
+  return !value || /^(n\/?a|unknown|null|none)$/i.test(String(value).trim());
+}
+
+function resolveOpenAQRegion(location = {}) {
+  const adminRegion = location.admin1 || location.region || location.state || null;
+  if (adminRegion && !isUnknownLocality(adminRegion)) {
+    return {
+      name: String(adminRegion).trim(),
+      type: 'administrative',
+      source: 'openaq_admin1',
+      synthetic: false,
+    };
+  }
+
+  if (!isUnknownLocality(location.locality)) {
+    return {
+      name: String(location.locality).trim(),
+      type: 'provider_locality',
+      source: 'openaq_locality',
+      synthetic: false,
+    };
+  }
+
+  return {
+    name: 'General Region',
+    type: 'synthetic_fallback',
+    source: 'missing_provider_region',
+    synthetic: true,
+  };
+}
+
+function normalizeOpenAQLocationName(location = {}) {
+  if (!isUnknownLocality(location.locality)) {
+    return String(location.locality).trim();
+  }
+
+  const label = String(location.name || '').trim();
+  const withoutAgency = label
+    .replace(/\s+-\s+(CPCB|DPCC|SPCB|AQMS|EPA|WAQI|OpenAQ|Monitor|Monitoring Station).*$/i, '')
+    .replace(/^(US Diplomatic Post:\s*)/i, '')
+    .trim();
+
+  return withoutAgency || label || 'Unknown';
+}
+
 // ============ OPENAQ DISCOVERY ============
 
 async function discoverOpenAQ() {
@@ -73,18 +138,32 @@ async function discoverOpenAQ() {
     const countries = countriesResponse.data.results || [];
     log(`Found ${countries.length} countries in OpenAQ`, 'success');
 
+    coverage.stats.rejected_country_mismatches = coverage.stats.rejected_country_mismatches || 0;
+
     for (const country of countries.slice(0, 30)) { // Limit to 30 to avoid rate limiting
       try {
+        if (!country.id || !country.code) {
+          log(`Skipping OpenAQ country without stable id/code: ${country.name || 'unknown'}`, 'warning');
+          continue;
+        }
+
         // Get locations for each country
         const locResponse = await axios.get(
-          `${APIs.openaq_v3}/locations?country=${country.code}&limit=500`,
+          `${APIs.openaq_v3}/locations?countries_id=${country.id}&limit=500`,
           {
             headers: OPENAQ_KEY ? { 'X-API-Key': OPENAQ_KEY } : {},
             timeout: 10000
           }
         );
 
-        const locations = locResponse.data.results || [];
+        const locations = (locResponse.data.results || []).filter(loc => {
+          const locCountryCode = getOpenAQCountryCode(loc);
+          const matches = !locCountryCode || normalizeText(locCountryCode) === normalizeText(country.code);
+          if (!matches) {
+            coverage.stats.rejected_country_mismatches++;
+          }
+          return matches;
+        });
         
         if (locations.length > 0) {
           if (!coverage.countries[country.name]) {
@@ -99,12 +178,16 @@ async function discoverOpenAQ() {
 
           // Organize locations by state/city
           locations.forEach(loc => {
-            const region = loc.admin1 || 'unknown_region';
+            const regionDescriptor = resolveOpenAQRegion(loc);
+            const region = regionDescriptor.name;
             
             if (!coverage.countries[country.name].regions[region]) {
               coverage.countries[country.name].regions[region] = {
                 cities: [],
-                sources: ['openaq']
+                sources: ['openaq'],
+                region_type: regionDescriptor.type,
+                region_source: regionDescriptor.source,
+                synthetic: regionDescriptor.synthetic
               };
               coverage.stats.total_regions++;
             }
@@ -114,7 +197,9 @@ async function discoverOpenAQ() {
             }
 
             coverage.countries[country.name].regions[region].cities.push({
-              name: loc.name,
+              name: normalizeOpenAQLocationName(loc),
+              provider_location_name: loc.name,
+              locality: isUnknownLocality(loc.locality) ? null : loc.locality,
               coordinates: loc.coordinates,
               measurements: loc.measurements?.length || 0,
               last_updated: loc.lastUpdated,

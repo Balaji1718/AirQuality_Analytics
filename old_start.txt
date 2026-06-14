@@ -1,0 +1,2 @@
+async function fetchFromWAQI(cityName) {
+  const { validateLocationMatch, getStandardCoordinates } = require('./utils/locationValidator');

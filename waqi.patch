@@ -1,0 +1,27 @@
+diff --git a/server/index.js b/server/index.js
+--- a/server/index.js
++++ b/server/index.js
+@@ -1175,25 +1175,13 @@
+ async function fetchFromWAQI(cityName) {
+-  const { validateLocationMatch, getStandardCoordinates } = require('./utils/locationValidator');
++  const { validateLocationMatch } = require('./utils/locationValidator');
+ 
+   try {
+-    // Get validated coordinates for the city
+-    const standardCoords = getStandardCoordinates(cityName);
+-    let url;
+-    
+-    if (standardCoords) {
+-      // Use validated coordinates for geo-based search
+-      url = \${API_SOURCES.waqi.baseUrl}/feed/geo:;/?token=\;
+-      console.log(\?? Using validated coordinates for : , \);
+-    } else {
+-      // Fallback to city search for non-Indian cities
+-      url = \${API_SOURCES.waqi.baseUrl}/feed//?token=\;
+-      console.log(\?? Using city search for \);
+-    }
++    // PRIORITIZE KEYWORD SEARCH: Allows WAQI to return the most relevant station
++    const url = \${API_SOURCES.waqi.baseUrl}/feed//?token=\;
++    console.log(\?? Using WAQI keyword search for \);
+ 
+     const response = await axios.get(url);

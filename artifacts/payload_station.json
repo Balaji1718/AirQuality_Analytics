@@ -1,0 +1,140 @@
+{
+  "city": "Delhi Technological University",
+  "resolvedLocation": "Delhi Technological University, Delhi - CPCB",
+  "resolvedCoordinates": [
+    28.744,
+    77.12
+  ],
+  "providerLocation": "Delhi Technological University, Delhi - CPCB",
+  "stationMetadata": {
+    "stationId": 13,
+    "stationName": "Delhi Technological University, Delhi - CPCB",
+    "coordinates": {
+      "lat": 28.744,
+      "lon": 77.12
+    },
+    "confidence": 1
+  },
+  "searchContext": {
+    "level": "station",
+    "country": "India",
+    "state": null,
+    "regionCandidates": [],
+    "matchedRegion": null,
+    "queryCandidates": [
+      "Delhi Technological University"
+    ],
+    "source": "OpenAQ"
+  },
+  "from": "2026-06-06T06:23:19.409Z",
+  "to": "2026-06-13T06:23:19.409Z",
+  "source": "OpenAQ",
+  "count": 300,
+  "snapshot": [
+    {
+      "pollutant": "no2",
+      "value": 73.17,
+      "unit": "µg/m³"
+    },
+    {
+      "pollutant": "pm25",
+      "value": 446.49,
+      "unit": "µg/m³"
+    }
+  ],
+  "localAdvice": "Air quality in Delhi Technological University is very poor (PM2.5 extremely high). Avoid all outdoor activities, stay indoors with windows closed, and use air purifiers if available.",
+  "apiInfo": {
+    "primarySource": "OpenAQ",
+    "adviceSource": "Rule-based",
+    "availableSources": [
+      "openaq",
+      "waqi",
+      "openweather"
+    ],
+    "note": "Data from OpenAQ API (2026-06-06 to 2026-06-13) ≡ƒôà, advice from Rule-based (400 older records filtered for better visualization)",
+    "resolution": "Resolved as station-level query"
+  },
+  "stationsCount": 1,
+  "stationsSample": [
+    {
+      "stationId": 13,
+      "resolvedLocation": "Delhi Technological University, Delhi - CPCB",
+      "coordinates": [
+        28.744,
+        77.12
+      ],
+      "stationMetadata": {
+        "stationId": 13,
+        "stationName": "Delhi Technological University, Delhi - CPCB",
+        "coordinates": {
+          "lat": 28.744,
+          "lon": 77.12
+        },
+        "confidence": 1
+      },
+      "snapshot": [
+        {
+          "pollutant": "no2",
+          "value": 73.17,
+          "unit": "µg/m³"
+        },
+        {
+          "pollutant": "pm25",
+          "value": 446.49,
+          "unit": "µg/m³"
+        }
+      ],
+      "measurementsCount": 300
+    }
+  ],
+  "resultsSample": [
+    {
+      "pollutant": "no2",
+      "value": 11.3,
+      "unit": "µg/m³",
+      "dateLocal": "2016-11-03T00:00:00+05:30",
+      "dateUTC": "2016-11-02T18:30:00Z",
+      "location": "Delhi Technological University, Delhi - CPCB",
+      "providerLocation": "Delhi Technological University, Delhi - CPCB",
+      "country": "India",
+      "coordinates": [
+        28.744,
+        77.12
+      ],
+      "stationMetadata": {
+        "stationId": 13,
+        "stationName": "Delhi Technological University, Delhi - CPCB",
+        "coordinates": {
+          "lat": 28.744,
+          "lon": 77.12
+        },
+        "confidence": 1
+      },
+      "source": "OpenAQ"
+    },
+    {
+      "pollutant": "no2",
+      "value": 8.6,
+      "unit": "µg/m³",
+      "dateLocal": "2016-11-03T17:15:00+05:30",
+      "dateUTC": "2016-11-03T11:45:00Z",
+      "location": "Delhi Technological University, Delhi - CPCB",
+      "providerLocation": "Delhi Technological University, Delhi - CPCB",
+      "country": "India",
+      "coordinates": [
+        28.744,
+        77.12
+      ],
+      "stationMetadata": {
+        "stationId": 13,
+        "stationName": "Delhi Technological University, Delhi - CPCB",
+        "coordinates": {
+          "lat": 28.744,
+          "lon": 77.12
+        },
+        "confidence": 1
+      },
+      "source": "OpenAQ"
+    }
+  ]
+}
